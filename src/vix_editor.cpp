@@ -88,10 +88,21 @@ public:
 
     void InitPython() {
         if (!Py_IsInitialized()) Py_Initialize();
-        PyRun_SimpleString("import sys\nsys.path.append('/home/jad')");
+        
+        // Get path to executable
+        char result[PATH_MAX];
+        ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
+        string exePath = (count != -1) ? string(result, count) : "";
+        string exeDir = exePath.substr(0, exePath.find_last_of("/"));
+
+        PyRun_SimpleString("import sys");
+        PyRun_SimpleString("import os");
+        string addPathCmd = "sys.path.append('" + exeDir + "')";
+        PyRun_SimpleString(addPathCmd.c_str());
+
         pModule = PyImport_ImportModule("vix_brain");
         if (pModule) {
-            PyObject* pBrain = PyObject_GetAttrString(pModule, "vix_brain");
+            PyObject* pBrain = PyObject_GetAttrString(pModule, "brain");
             if (pBrain) {
                 pFuncSuggest = PyObject_GetAttrString(pBrain, "get_ghost_suggestion");
                 pFuncLint = PyObject_GetAttrString(pBrain, "lint_cpp");
@@ -378,7 +389,11 @@ public:
             }
             if(!focus_sidebar){ FindMatch(); UpdateSuggestion(); UpdateLinter(); }
         }
-        endwin(); tcsetattr(0, TCSANOW, &ot);
+        noraw();
+        echo();
+        endwin(); 
+        tcsetattr(0, TCSANOW, &ot);
+        system("stty sane && clear"); // Master Reset to fix the 'pyramid' bug
     }
 };
 
