@@ -28,7 +28,8 @@ using namespace std;
 // --- Helper Tools ---
 
 // Simple tokenizer
-vector<string> split_string(const string& str, char delimiter) {
+vector<string> split_string(const string& str, char delimiter)
+{
     vector<string> tokens;
     string token;
     istringstream tokenStream(str);
@@ -40,17 +41,19 @@ vector<string> split_string(const string& str, char delimiter) {
 
 // --- The Agent Class ---
 
-class JarvisAgent {
+class JarvisAgent
+{
 private:
     PyObject *pModule;
     PyObject *pFuncProcess;
     PyObject *pFuncGenerate;
     string lastGeneratedCode;
 
-    void initPython() {
+    void initPython()
+    {
         cout << GREY << "[System] Initializing Neural Interface (Python)..." << RESET << endl;
         Py_Initialize();
-        
+
         // Get path to executable
         char result[PATH_MAX];
         ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
@@ -82,9 +85,10 @@ private:
         cout << GREY << "[System] Interface Linked." << RESET << endl;
     }
 
-    string callPython(PyObject* func, string arg) {
+    string callPython(PyObject* func, string arg)
+    {
         if (!func) return "Error: Function not loaded";
-        
+
         PyObject *pArgs = PyTuple_New(1);
         PyObject *pValue = PyUnicode_FromString(arg.c_str());
         PyTuple_SetItem(pArgs, 0, pValue);
@@ -104,19 +108,22 @@ private:
     }
 
 public:
-    JarvisAgent() {
+    JarvisAgent()
+    {
         initPython();
         lastGeneratedCode = "";
     }
 
-    ~JarvisAgent() {
+    ~JarvisAgent()
+    {
         Py_XDECREF(pFuncProcess);
         Py_XDECREF(pFuncGenerate);
         Py_XDECREF(pModule);
         Py_Finalize();
     }
 
-    void cmd_time() {
+    void cmd_time()
+    {
         time_t now = time(0);
         char* dt = ctime(&now);
         string time_str(dt);
@@ -124,7 +131,8 @@ public:
         cout << CYAN << ">> " << RESET << time_str << endl;
     }
 
-    void cmd_ls() {
+    void cmd_ls()
+    {
         DIR *dir;
         struct dirent *ent;
         cout << CYAN << ">> Listing current directory:" << RESET << endl;
@@ -135,7 +143,7 @@ public:
                 if(name == "." || name == "..") continue;
                 if (ent->d_type == DT_DIR) cout << BLUE << name << "/" << RESET << "  ";
                 else cout << WHITE << name << RESET << "  ";
-                
+
                 count++;
                 if(count % 5 == 0) cout << endl;
             }
@@ -146,7 +154,8 @@ public:
         }
     }
 
-    void cmd_stats() {
+    void cmd_stats()
+    {
         cout << CYAN << ">> Agent Status Report:" << RESET << endl;
         // Read memory usage from /proc/self/status
         ifstream status_file("/proc/self/status");
@@ -161,23 +170,25 @@ public:
         cout << "   Brain: Connected (Python 3.12 Embed)" << endl;
     }
 
-    void cmd_code(string topic) {
+    void cmd_code(string topic)
+    {
         cout << YELLOW << "[Generating C++ Code for '" << topic << "']..." << RESET << endl;
         string code = callPython(pFuncGenerate, topic);
         lastGeneratedCode = code;
-        
+
         cout << "------------------------------------------" << endl;
         cout << GREEN << code << RESET << endl;
         cout << "------------------------------------------" << endl;
         cout << GREY << "(Type 'save <filename>' to save this snippet)" << RESET << endl;
     }
 
-    void cmd_save(string filename) {
+    void cmd_save(string filename)
+    {
         if(lastGeneratedCode.empty()) {
             cout << RED << ">> No code to save! Generate something first." << RESET << endl;
             return;
         }
-        
+
         ofstream out(filename);
         if(out.is_open()) {
             out << lastGeneratedCode;
@@ -188,12 +199,14 @@ public:
         }
     }
 
-    void chat(string input) {
+    void chat(string input)
+    {
         string response = callPython(pFuncProcess, input);
         cout << MAGENTA << "Jarvis: " << RESET << response << endl;
     }
 
-    void run() {
+    void run()
+    {
         cout << MAGENTA << "\n╔════════════════════════════════════════════╗" << endl;
         cout << "║  JARVIS AGENT: CODE & ASSIST               ║" << endl;
         cout << "║  C++ Core | Python Intelligence            ║" << endl;
@@ -212,8 +225,7 @@ public:
 
             if(cmd == "exit" || cmd == "quit") {
                 break;
-            }
-            else if(cmd == "help") {
+            } else if(cmd == "help") {
                 cout << YELLOW << "Agent Commands:" << RESET << endl;
                 cout << "  code <topic>   : Generate C++ code (e.g., 'code class', 'code loop')" << endl;
                 cout << "  save <file>    : Save the generated code to a file" << endl;
@@ -222,20 +234,17 @@ public:
                 cout << "  time           : Show current time" << endl;
                 cout << "  clear          : Clear screen" << endl;
                 cout << "  [text]         : Chat with the vix_brain" << endl;
-            }
-            else if(cmd == "time") cmd_time();
+            } else if(cmd == "time") cmd_time();
             else if(cmd == "ls" || cmd == "list") cmd_ls();
             else if(cmd == "stats") cmd_stats();
             else if(cmd == "clear") system("clear");
             else if(cmd == "code") {
                 if(tokens.size() < 2) cout << RED << "Usage: code <topic>" << RESET << endl;
                 else cmd_code(tokens[1]);
-            }
-            else if(cmd == "save") {
+            } else if(cmd == "save") {
                 if(tokens.size() < 2) cout << RED << "Usage: save <filename>" << RESET << endl;
                 else cmd_save(tokens[1]);
-            }
-            else {
+            } else {
                 // Pass full string to chat
                 chat(input);
             }
@@ -244,7 +253,8 @@ public:
     }
 };
 
-int main() {
+int main()
+{
     JarvisAgent agent;
     agent.run();
     return 0;

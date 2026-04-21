@@ -11,6 +11,8 @@ Welcome to Vix Ultimate! Here is a guide for the "new guys" to master the editor
 | **`Ctrl + R`** | **Run** | Compile and Run (C, C++, Python). |
 | **`Ctrl + F`** | **Find** | Search for text in the file. |
 | **`Ctrl + G`** | **Go To** | Jump to a specific line number. |
+| **`Ctrl + Z`** | **Undo** | Revert last action. |
+| **`Ctrl + Y`** | **Redo** | Restore undone action. |
 
 ## 📂 Navigation & Sidebar
 | Keybind | Action | Description |
@@ -24,6 +26,15 @@ Welcome to Vix Ultimate! Here is a guide for the "new guys" to master the editor
 *   **Ghost Suggestion**: As you type, gray text appears showing suggested code.
 *   **`TAB`**: Press Tab to instantly accept and complete the suggestion!
 *   **Auto-Indent**: Pressing Enter automatically aligns your code.
+
+## 🌐 Supported Languages
+| Language | Extensions |
+| :--- | :--- |
+| **C++** | `.cpp`, `.hpp`, `.cc`, `.hh` |
+| **Python** | `.py` |
+| **JavaScript** | `.js`, `.mjs` |
+| **Rust** | `.rs` |
+| **Go** | `.go` |
 
 ## 🎨 Sidebar Colors
 *   **Cyan**: Python (`.py`)

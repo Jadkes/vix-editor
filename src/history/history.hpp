@@ -1,0 +1,195 @@
+/*
+ * History - Undo/Redo command pattern implementation
+ *
+ * Purpose: Manages undo/redo stack for text editor operations using
+ *          Command pattern to encapsulate reversible operations.
+ * Thread-safety: Not thread-safe (ncurses is single-threaded)
+ *
+ * Design:
+ * - Uses Command pattern where each operation is a Command object
+ * - Undo pops from undo_stack, pushes to redo_stack
+ * - Redo pops from redo_stack, pushes to undo_stack
+ * - Execute clears redo_stack (new action invalidates redo history)
+ * - Stacks are capped at max_levels (default 100)
+ */
+#ifndef VIX_HISTORY_HPP
+#define VIX_HISTORY_HPP
+
+#include <memory>
+#include <vector>
+#include <string>
+
+/*
+ * Command - Abstract base class for undoable operations
+ *
+ * All editor operations derive from Command to enable undo/redo.
+ * Each command knows how to both execute and undo itself.
+ */
+class Command
+{
+public:
+    virtual ~Command() = default;
+
+    /*
+     * execute - Perform the operation
+     * @return true on success, false on failure
+     */
+    virtual bool execute() = 0;
+
+    /*
+     * undo - Reverse the operation
+     * @return true on success, false on failure
+     */
+    virtual bool undo() = 0;
+
+    /*
+     * description - Human-readable description for debugging
+     */
+    virtual std::string description() const = 0;
+};
+
+// Smart pointer type for commands
+using CommandPtr = std::unique_ptr<Command>;
+
+/*
+ * History - Undo/redo stack manager
+ *
+ * Maintains two stacks:
+ * - undo_stack: completed operations that can be undone
+ * - redo_stack: undone operations that can be redone
+ *
+ * Stack limit is max_levels (default 100).
+ */
+class History
+{
+public:
+    explicit History(size_t max_levels = 100);
+
+    /*
+     * execute - Run a command and add to undo stack
+     *
+     * Executes the command, pushes to undo_stack.
+     * Clears redo_stack (new action invalidates redo).
+     * If undo_stack exceeds max_levels, oldest entries are dropped.
+     *
+     * @param cmd - Command to execute (ownership transferred)
+     * @return true if command executed successfully
+     */
+    bool execute(CommandPtr cmd);
+
+    /*
+     * undo - Undo the last operation
+     *
+     * Pops from undo_stack, calls undo(), pushes to redo_stack.
+     * @return true if undo succeeded and undo_stack was not empty
+     */
+    bool undo();
+
+    /*
+     * redo - Redo the last undone operation
+     *
+     * Pops from redo_stack, calls execute(), pushes to undo_stack.
+     * @return true if redo succeeded and redo_stack was not empty
+     */
+    bool redo();
+
+    /*
+     * canUndo - Check if undo is available
+     */
+    bool canUndo() const;
+
+    /*
+     * canRedo - Check if redo is available
+     */
+    bool canRedo() const;
+
+    /*
+     * clear - Clear both stacks
+     *
+     * Called when buffer is significantly changed (e.g., file reload).
+     */
+    void clear();
+
+    /*
+     * undoSize - Number of undoable operations
+     */
+    size_t undoSize() const;
+
+    /*
+     * redoSize - Number of redoable operations
+     */
+    size_t redoSize() const;
+
+private:
+    // Drops oldest entries if stack exceeds max_levels
+    void trimStack(std::vector<CommandPtr>& stack);
+
+    std::vector<CommandPtr> undo_stack;
+    std::vector<CommandPtr> redo_stack;
+    size_t max_levels;
+};
+
+// Forward declaration to avoid circular include
+class Buffer;
+
+/*
+ * InsertCommand - Insert text at position
+ *
+ * Used for character-by-character or small text insertions.
+ */
+class InsertCommand : public Command
+{
+public:
+    InsertCommand(Buffer* buf, const std::string& text, int line, int col);
+
+    bool execute() override;
+    bool undo() override;
+    std::string description() const override;
+private:
+    Buffer* buffer;
+    std::string text;
+    int line;
+    int col;
+};
+
+/*
+ * DeleteCommand - Delete text at position
+ *
+ * Stores the deleted text for undo.
+ */
+class DeleteCommand : public Command
+{
+public:
+    DeleteCommand(Buffer* buf, const std::string& text, int line, int col);
+
+    bool execute() override;
+    bool undo() override;
+    std::string description() const override;
+private:
+    Buffer* buffer;
+    std::string text;
+    int line;
+    int col;
+};
+
+/*
+ * NewLineCommand - Insert new line at position
+ *
+ * Used when Enter is pressed to create a new line.
+ */
+class NewLineCommand : public Command
+{
+public:
+    NewLineCommand(Buffer* buf, int insert_before_line, const std::string& second_half);
+
+    bool execute() override;
+    bool undo() override;
+    std::string description() const override;
+
+private:
+    Buffer* buffer;
+    int insert_before_line;
+    std::string second_half;
+};
+
+#endif // VIX_HISTORY_HPP

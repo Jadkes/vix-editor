@@ -1,0 +1,75 @@
+Start testing: Apr 21 19:12 +01
+----------------------------------------------------------
+1/2 Testing: BufferTest
+1/2 Test: BufferTest
+Command: "/home/jadkeskes/Documents/vix-editor/tests/build/buffer_test"
+Directory: /home/jadkeskes/Documents/vix-editor/tests/build
+"BufferTest" start time: Apr 21 19:12 +01
+Output:
+----------------------------------------------------------
+Running main() from /home/jadkeskes/Documents/vix-editor/tests/build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 1 test from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 1 test from BufferTest
+[ RUN      ] BufferTest.PlaceholderTest
+[       OK ] BufferTest.PlaceholderTest (0 ms)
+[----------] 1 test from BufferTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 1 test from 1 test suite ran. (0 ms total)
+[  PASSED  ] 1 test.
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"BufferTest" end time: Apr 21 19:12 +01
+"BufferTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2/2 Testing: HistoryTest
+2/2 Test: HistoryTest
+Command: "/home/jadkeskes/Documents/vix-editor/tests/build/history_test"
+Directory: /home/jadkeskes/Documents/vix-editor/tests/build
+"HistoryTest" start time: Apr 21 19:12 +01
+Output:
+----------------------------------------------------------
+Running main() from /home/jadkeskes/Documents/vix-editor/tests/build/_deps/googletest-src/googletest/src/gtest_main.cc
+[==========] Running 11 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 11 tests from HistoryTest
+[ RUN      ] HistoryTest.InitialState
+[       OK ] HistoryTest.InitialState (0 ms)
+[ RUN      ] HistoryTest.CanUndoAfterExecute
+[       OK ] HistoryTest.CanUndoAfterExecute (0 ms)
+[ RUN      ] HistoryTest.Undo
+[       OK ] HistoryTest.Undo (0 ms)
+[ RUN      ] HistoryTest.Redo
+[       OK ] HistoryTest.Redo (0 ms)
+[ RUN      ] HistoryTest.UndoRedoStack
+[       OK ] HistoryTest.UndoRedoStack (0 ms)
+[ RUN      ] HistoryTest.NewActionClearsRedo
+[       OK ] HistoryTest.NewActionClearsRedo (0 ms)
+[ RUN      ] HistoryTest.Clear
+[       OK ] HistoryTest.Clear (0 ms)
+[ RUN      ] HistoryTest.MultipleUndo
+[       OK ] HistoryTest.MultipleUndo (0 ms)
+[ RUN      ] HistoryTest.InsertCommandDescription
+[       OK ] HistoryTest.InsertCommandDescription (0 ms)
+[ RUN      ] HistoryTest.DeleteCommandDescription
+[       OK ] HistoryTest.DeleteCommandDescription (0 ms)
+[ RUN      ] HistoryTest.NewLineCommandDescription
+[       OK ] HistoryTest.NewLineCommandDescription (0 ms)
+[----------] 11 tests from HistoryTest (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 11 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 11 tests.
+<end of output>
+Test time =   0.00 sec
+----------------------------------------------------------
+Test Passed.
+"HistoryTest" end time: Apr 21 19:12 +01
+"HistoryTest" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Apr 21 19:12 +01

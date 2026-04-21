@@ -1,0 +1,26 @@
+// tests/buffer_test.cpp - Buffer class unit tests
+//
+// Purpose: Unit tests for Buffer editor functionality
+// TODO: Implement after Buffer class is created
+
+#include <gtest/gtest.h>
+
+// TODO(username): Include Buffer class header when available
+// #include "buffer.h"
+
+// Example test structure (to be filled after Buffer class exists):
+// TEST(BufferTest, CanCreateBuffer) {
+//     Buffer buf;
+//     EXPECT_TRUE(buf.IsEmpty());
+// }
+//
+// TEST(BufferTest, CanInsertLine) {
+//     Buffer buf;
+//     buf.InsertLine(0, "Hello, World!");
+//     EXPECT_EQ(buf.GetLine(0), "Hello, World!");
+// }
+
+TEST(BufferTest, PlaceholderTest) {
+    // Placeholder - will be populated after Buffer class implementation
+    EXPECT_TRUE(true);
+}

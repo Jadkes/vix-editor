@@ -1,0 +1,107 @@
+// tests/history_test.cpp - History class unit tests
+#include <gtest/gtest.h>
+#include "history/history.hpp"
+
+TEST(HistoryTest, InitialState)
+{
+    History hist;
+    EXPECT_FALSE(hist.canUndo());
+    EXPECT_FALSE(hist.canRedo());
+    EXPECT_EQ(hist.undoSize(), 0u);
+    EXPECT_EQ(hist.redoSize(), 0u);
+}
+
+TEST(HistoryTest, CanUndoAfterExecute)
+{
+    History hist;
+    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    EXPECT_TRUE(hist.canUndo());
+    EXPECT_FALSE(hist.canRedo());
+}
+
+TEST(HistoryTest, Undo)
+{
+    History hist;
+    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    EXPECT_TRUE(hist.undo());
+    EXPECT_FALSE(hist.canUndo());
+    EXPECT_TRUE(hist.canRedo());
+    EXPECT_EQ(hist.redoSize(), 1u);
+}
+
+TEST(HistoryTest, Redo)
+{
+    History hist;
+    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    hist.undo();
+    EXPECT_TRUE(hist.redo());
+    EXPECT_TRUE(hist.canUndo());
+    EXPECT_FALSE(hist.canRedo());
+}
+
+TEST(HistoryTest, UndoRedoStack)
+{
+    History hist;
+    hist.execute(std::make_unique<InsertCommand>("a", 0));
+    hist.execute(std::make_unique<InsertCommand>("b", 1));
+    EXPECT_EQ(hist.undoSize(), 2u);
+
+    hist.undo();
+    EXPECT_EQ(hist.undoSize(), 1u);
+    EXPECT_EQ(hist.redoSize(), 1u);
+
+    hist.redo();
+    EXPECT_EQ(hist.undoSize(), 2u);
+    EXPECT_EQ(hist.redoSize(), 0u);
+}
+
+TEST(HistoryTest, NewActionClearsRedo)
+{
+    History hist;
+    hist.execute(std::make_unique<InsertCommand>("a", 0));
+    hist.undo();
+    EXPECT_EQ(hist.redoSize(), 1u);
+
+    hist.execute(std::make_unique<InsertCommand>("b", 1));
+    EXPECT_EQ(hist.redoSize(), 0u);
+}
+
+TEST(HistoryTest, Clear)
+{
+    History hist;
+    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    hist.clear();
+    EXPECT_FALSE(hist.canUndo());
+    EXPECT_FALSE(hist.canRedo());
+}
+
+TEST(HistoryTest, MultipleUndo)
+{
+    History hist;
+    hist.execute(std::make_unique<InsertCommand>("a", 0));
+    hist.execute(std::make_unique<InsertCommand>("b", 1));
+    hist.execute(std::make_unique<InsertCommand>("c", 2));
+
+    EXPECT_TRUE(hist.undo());
+    EXPECT_TRUE(hist.undo());
+    EXPECT_EQ(hist.undoSize(), 1u);
+    EXPECT_EQ(hist.redoSize(), 2u);
+}
+
+TEST(HistoryTest, InsertCommandDescription)
+{
+    InsertCommand cmd("test", 5);
+    EXPECT_EQ(cmd.description(), "Insert: test");
+}
+
+TEST(HistoryTest, DeleteCommandDescription)
+{
+    DeleteCommand cmd("test", 5);
+    EXPECT_EQ(cmd.description(), "Delete: test");
+}
+
+TEST(HistoryTest, NewLineCommandDescription)
+{
+    NewLineCommand cmd(10);
+    EXPECT_EQ(cmd.description(), "NewLine at 10");
+}

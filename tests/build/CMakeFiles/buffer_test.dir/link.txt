@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/buffer_test.dir/link.d CMakeFiles/buffer_test.dir/buffer_test.cpp.o -o buffer_test  lib/libgtest_main.a lib/libgtest.a

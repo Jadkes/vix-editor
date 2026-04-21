@@ -1,0 +1,1 @@
+/usr/bin/c++ -Wl,--dependency-file=CMakeFiles/history_test.dir/link.d CMakeFiles/history_test.dir/history_test.cpp.o "CMakeFiles/history_test.dir/home/jadkeskes/Documents/vix-editor/src/history/history.cpp.o" -o history_test  lib/libgtest_main.a lib/libgtest.a
