@@ -11,6 +11,7 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include <cctype>
 
 // ANSI Colors
 #define MAGENTA "\033[1;35m"
@@ -23,17 +24,16 @@
 #define GREY    "\033[1;90m"
 #define RESET   "\033[0m"
 
-using namespace std;
 
 // --- Helper Tools ---
 
 // Simple tokenizer
-vector<string> split_string(const string& str, char delimiter)
+std::vector<std::string> split_string(const std::string& str, char delimiter)
 {
-    vector<string> tokens;
-    string token;
-    istringstream tokenStream(str);
-    while (getline(tokenStream, token, delimiter)) {
+    std::vector<std::string> tokens;
+    std::string token;
+    std::istringstream tokenStream(str);
+    while (std::getline(tokenStream, token, delimiter)) {
         if(!token.empty()) tokens.push_back(token);
     }
     return tokens;
@@ -50,22 +50,22 @@ private:
     PyObject *pModule;
     PyObject *pFuncProcess;
     PyObject *pFuncGenerate;
-    string lastGeneratedCode;
+    std::string lastGeneratedCode;
 
     void initPython()
     {
-        cout << GREY << "[System] Initializing Neural Interface (Python)..." << RESET << endl;
+        std::cout << GREY << "[System] Initializing Neural Interface (Python)..." << RESET << std::endl;
         Py_Initialize();
 
         // Get path to executable
         char result[PATH_MAX];
         ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
-        string exePath = (count != -1) ? string(result, count) : "";
-        string exeDir = exePath.substr(0, exePath.find_last_of("/"));
+        std::string exePath = (count != -1) ? std::string(result, count) : "";
+        std::string exeDir = exePath.substr(0, exePath.find_last_of("/"));
 
         PyRun_SimpleString("import sys");
         PyRun_SimpleString("import os");
-        string addPathCmd = "sys.path.append('" + exeDir + "')";
+        std::string addPathCmd = "sys.path.append('" + exeDir + "')";
         PyRun_SimpleString(addPathCmd.c_str());
 
         PyObject *pName = PyUnicode_DecodeFSDefault("vix_brain");
@@ -74,7 +74,7 @@ private:
 
         if (pModule == nullptr) {
             PyErr_Print();
-            cerr << RED << "[CRITICAL] Brain module missing!" << RESET << endl;
+            std::cerr << RED << "[CRITICAL] Brain module missing!" << RESET << std::endl;
             exit(1);
         }
 
@@ -82,13 +82,13 @@ private:
         pFuncGenerate = PyObject_GetAttrString(pModule, "generate_cpp");
 
         if (!pFuncProcess || !pFuncGenerate) {
-            cerr << RED << "[CRITICAL] Brain functions missing!" << RESET << endl;
+            std::cerr << RED << "[CRITICAL] Brain functions missing!" << RESET << std::endl;
             exit(1);
         }
-        cout << GREY << "[System] Interface Linked." << RESET << endl;
+        std::cout << GREY << "[System] Interface Linked." << RESET << std::endl;
     }
 
-    string callPython(PyObject* func, string arg)
+    std::string callPython(PyObject* func, std::string arg)
     {
         if (!func) return "Error: Function not loaded";
 
@@ -99,7 +99,7 @@ private:
         PyObject *pResult = PyObject_CallObject(func, pArgs);
         Py_DECREF(pArgs);
 
-        string result = "";
+        std::string result = "";
         if (pResult != nullptr) {
             result = PyUnicode_AsUTF8(pResult);
             Py_DECREF(pResult);
@@ -129,28 +129,28 @@ public:
     {
         time_t now = time(0);
         char* dt = ctime(&now);
-        string time_str(dt);
+        std::string time_str(dt);
         time_str.pop_back();
-        cout << CYAN << ">> " << RESET << time_str << endl;
+        std::cout << CYAN << ">> " << RESET << time_str << std::endl;
     }
 
     void cmd_ls()
     {
         DIR *dir;
         struct dirent *ent;
-        cout << CYAN << ">> Listing current directory:" << RESET << endl;
+        std::cout << CYAN << ">> Listing current directory:" << RESET << std::endl;
         if ((dir = opendir (".")) != NULL) {
             int count = 0;
             while ((ent = readdir (dir)) != NULL) {
-                string name = ent->d_name;
+                std::string name = ent->d_name;
                 if(name == "." || name == "..") continue;
-                if (ent->d_type == DT_DIR) cout << BLUE << name << "/" << RESET << "  ";
-                else cout << WHITE << name << RESET << "  ";
+                if (ent->d_type == DT_DIR) std::cout << BLUE << name << "/" << RESET << "  ";
+                else std::cout << WHITE << name << RESET << "  ";
 
                 count++;
-                if(count % LS_COLUMNS == 0) cout << endl;
+                if(count % LS_COLUMNS == 0) std::cout << std::endl;
             }
-            cout << endl;
+            std::cout << std::endl;
             closedir (dir);
         } else {
             perror ("");
@@ -159,100 +159,100 @@ public:
 
     void cmd_stats()
     {
-        cout << CYAN << ">> Agent Status Report:" << RESET << endl;
+        std::cout << CYAN << ">> Agent Status Report:" << RESET << std::endl;
         // Read memory usage from /proc/self/status
-        ifstream status_file("/proc/self/status");
-        string line;
-        while(getline(status_file, line)) {
-            if(line.find("VmRSS") != string::npos || line.find("VmSize") != string::npos) {
-                cout << "   " << line << endl;
+        std::ifstream status_file("/proc/self/status");
+        std::string line;
+        while(std::getline(status_file, line)) {
+            if(line.find("VmRSS") != std::string::npos || line.find("VmSize") != std::string::npos) {
+                std::cout << "   " << line << std::endl;
             }
         }
         status_file.close();
-        cout << "   Core: Online (C++ Native)" << endl;
-        cout << "   Brain: Connected (Python 3.12 Embed)" << endl;
+        std::cout << "   Core: Online (C++ Native)" << std::endl;
+        std::cout << "   Brain: Connected (Python 3.12 Embed)" << std::endl;
     }
 
-    void cmd_code(string topic)
+    void cmd_code(std::string topic)
     {
-        cout << YELLOW << "[Generating C++ Code for '" << topic << "']..." << RESET << endl;
-        string code = callPython(pFuncGenerate, topic);
+        std::cout << YELLOW << "[Generating C++ Code for '" << topic << "']..." << RESET << std::endl;
+        std::string code = callPython(pFuncGenerate, topic);
         lastGeneratedCode = code;
 
-        cout << "------------------------------------------" << endl;
-        cout << GREEN << code << RESET << endl;
-        cout << "------------------------------------------" << endl;
-        cout << GREY << "(Type 'save <filename>' to save this snippet)" << RESET << endl;
+        std::cout << "------------------------------------------" << std::endl;
+        std::cout << GREEN << code << RESET << std::endl;
+        std::cout << "------------------------------------------" << std::endl;
+        std::cout << GREY << "(Type 'save <filename>' to save this snippet)" << RESET << std::endl;
     }
 
-    void cmd_save(string filename)
+    void cmd_save(std::string filename)
     {
         if(lastGeneratedCode.empty()) {
-            cout << RED << ">> No code to save! Generate something first." << RESET << endl;
+            std::cout << RED << ">> No code to save! Generate something first." << RESET << std::endl;
             return;
         }
 
-        ofstream out(filename);
+        std::ofstream out(filename);
         if(out.is_open()) {
             out << lastGeneratedCode;
             out.close();
-            cout << GREEN << ">> Code saved to " << filename << RESET << endl;
+            std::cout << GREEN << ">> Code saved to " << filename << RESET << std::endl;
         } else {
-            cout << RED << ">> Error writing to file." << RESET << endl;
+            std::cout << RED << ">> Error writing to file." << RESET << std::endl;
         }
     }
 
-    void chat(string input)
+    void chat(std::string input)
     {
-        string response = callPython(pFuncProcess, input);
-        cout << MAGENTA << "Jarvis: " << RESET << response << endl;
+        std::string response = callPython(pFuncProcess, input);
+        std::cout << MAGENTA << "Jarvis: " << RESET << response << std::endl;
     }
 
     void run()
     {
-        cout << MAGENTA << "\n╔════════════════════════════════════════════╗" << endl;
-        cout << "║  JARVIS AGENT: CODE & ASSIST               ║" << endl;
-        cout << "║  C++ Core | Python Intelligence            ║" << endl;
-        cout << "╚════════════════════════════════════════════╝" << RESET << endl;
-        cout << GREY << "Type 'help' for agent commands." << RESET << endl;
+        std::cout << MAGENTA << "\n╔════════════════════════════════════════════╗" << std::endl;
+        std::cout << "║  JARVIS AGENT: CODE & ASSIST               ║" << std::endl;
+        std::cout << "║  C++ Core | Python Intelligence            ║" << std::endl;
+        std::cout << "╚════════════════════════════════════════════╝" << RESET << std::endl;
+        std::cout << GREY << "Type 'help' for agent commands." << RESET << std::endl;
 
-        string input;
+        std::string input;
         while(true) {
-            cout << CYAN << "\nYou: " << RESET;
-            getline(cin, input);
+            std::cout << CYAN << "\nYou: " << RESET;
+            std::getline(std::cin, input);
             if(input.empty()) continue;
 
-            vector<string> tokens = split_string(input, ' ');
-            string cmd = tokens[0];
-            for(auto& c : cmd) c = tolower(c);
+            std::vector<std::string> tokens = split_string(input, ' ');
+            std::string cmd = tokens[0];
+            for(auto& c : cmd) c = std::tolower(c);
 
             if(cmd == "exit" || cmd == "quit") {
                 break;
             } else if(cmd == "help") {
-                cout << YELLOW << "Agent Commands:" << RESET << endl;
-                cout << "  code <topic>   : Generate C++ code (e.g., 'code class', 'code loop')" << endl;
-                cout << "  save <file>    : Save the generated code to a file" << endl;
-                cout << "  ls             : List files in current directory" << endl;
-                cout << "  stats          : Show agent memory usage" << endl;
-                cout << "  time           : Show current time" << endl;
-                cout << "  clear          : Clear screen" << endl;
-                cout << "  [text]         : Chat with the vix_brain" << endl;
+                std::cout << YELLOW << "Agent Commands:" << RESET << std::endl;
+                std::cout << "  code <topic>   : Generate C++ code (e.g., 'code class', 'code loop')" << std::endl;
+                std::cout << "  save <file>    : Save the generated code to a file" << std::endl;
+                std::cout << "  ls             : List files in current directory" << std::endl;
+                std::cout << "  stats          : Show agent memory usage" << std::endl;
+                std::cout << "  time           : Show current time" << std::endl;
+                std::cout << "  clear          : Clear screen" << std::endl;
+                std::cout << "  [text]         : Chat with the vix_brain" << std::endl;
             } else if(cmd == "time") cmd_time();
             else if(cmd == "ls" || cmd == "list") cmd_ls();
             else if(cmd == "stats") cmd_stats();
             else if(cmd == "clear") system("clear");
             else if(cmd == "code") {
-                if(tokens.size() < 2) cout << RED << "Usage: code <topic>" << RESET << endl;
+                if(tokens.size() < 2) std::cout << RED << "Usage: code <topic>" << RESET << std::endl;
                 else cmd_code(tokens[1]);
             } else if(cmd == "save") {
-                if(tokens.size() < 2) cout << RED << "Usage: save <filename>" << RESET << endl;
+                if(tokens.size() < 2) std::cout << RED << "Usage: save <filename>" << RESET << std::endl;
                 else cmd_save(tokens[1]);
             } else {
                 // Pass full string to chat
                 chat(input);
             }
         }
-        cout << MAGENTA << "Jarvis: Systems Disengaging." << RESET << endl;
+        std::cout << MAGENTA << "Jarvis: Systems Disengaging." << RESET << std::endl;
     }
 };
 

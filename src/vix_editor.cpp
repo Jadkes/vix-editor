@@ -14,11 +14,12 @@
 #include <unistd.h>
 #include <map>
 #include <termios.h>
+#include <cctype>
+#include <memory>
 #include "core/buffer.hpp"
 #include "history/history.hpp"
 
 namespace fs = std::filesystem;
-using namespace std;
 
 #ifndef CTRL
 #define CTRL(c) ((c) & 0x1f)
@@ -41,8 +42,8 @@ using namespace std;
 
 struct SyntaxRules {
     int lang;
-    string name;
-    vector<string> keywords;
+    std::string name;
+    std::vector<std::string> keywords;
 };
 
 class Vix_ultimate
@@ -50,19 +51,19 @@ class Vix_ultimate
 private:
     Buffer buffer;
     History history;
-    string current_dir, clipboard, last_search;
+    std::string current_dir, clipboard, last_search;
     int x, y, v_scroll, h_scroll, sidebar_scroll;
     bool running, show_sidebar, focus_sidebar;
     SyntaxRules rules;
-    vector<fs::path> sidebar_paths;
+    std::vector<fs::path> sidebar_paths;
     int sidebar_sel;
-    string status_msg;
-    chrono::steady_clock::time_point msg_time;
-    chrono::steady_clock::time_point last_save_time;
+    std::string status_msg;
+    std::chrono::steady_clock::time_point msg_time;
+    std::chrono::steady_clock::time_point last_save_time;
 
     PyObject *pModule = nullptr, *pFuncSuggest = nullptr, *pFuncLint = nullptr;
-    string ghost_text;
-    map<int, string> cpp_errors;
+    std::string ghost_text;
+    std::map<int, std::string> cpp_errors;
     struct {
         int x, y;
         bool active;
@@ -79,12 +80,12 @@ private:
     static constexpr int STATUS_MSG_TIMEOUT_SEC = 3;
 
 public:
-    Vix_ultimate(string fname) : history(HISTORY_MAX_LEVELS),
+    Vix_ultimate(std::string fname) : history(HISTORY_MAX_LEVELS),
         x(0), y(0), v_scroll(0), h_scroll(0), sidebar_scroll(0),
         running(true), show_sidebar(true), focus_sidebar(false), sidebar_sel(0)
     {
         current_dir = fs::current_path().string();
-        last_save_time = chrono::steady_clock::now();
+        last_save_time = std::chrono::steady_clock::now();
         match_pos.active = false;
         clipboard = "";
         InitPython();
@@ -105,10 +106,10 @@ public:
         if (Py_IsInitialized()) Py_Finalize();
     }
 
-    void Notify(string msg, bool err = false)
+    void Notify(std::string msg, bool err = false)
     {
         status_msg = (err ? "![ERR] " : ">> ") + msg;
-        msg_time = chrono::steady_clock::now();
+        msg_time = std::chrono::steady_clock::now();
     }
 
     void InitPython()
@@ -118,12 +119,12 @@ public:
         // Get path to executable
         char result[PATH_MAX];
         ssize_t count = readlink("/proc/self/exe", result, PATH_MAX);
-        string exePath = (count != -1) ? string(result, count) : "";
-        string exeDir = exePath.substr(0, exePath.find_last_of("/"));
+        std::string exePath = (count != -1) ? std::string(result, count) : "";
+        std::string exeDir = exePath.substr(0, exePath.find_last_of("/"));
 
         PyRun_SimpleString("import sys");
         PyRun_SimpleString("import os");
-        string addPathCmd = "sys.path.append('" + exeDir + "')";
+        std::string addPathCmd = "sys.path.append('" + exeDir + "')";
         PyRun_SimpleString(addPathCmd.c_str());
 
         pModule = PyImport_ImportModule("vix_brain");
@@ -140,7 +141,7 @@ public:
     void UpdateLinter()
     {
         if (!pFuncLint || rules.lang != 1) return;
-        string text = "";
+        std::string text = "";
         for(auto& l : buffer.GetAllLines()) text += l + "\n";
         PyObject *pArgs = PyTuple_New(1);
         PyTuple_SetItem(pArgs, 0, PyUnicode_FromString(text.c_str()));
@@ -163,10 +164,10 @@ public:
         match_pos.active = false;
         if (y >= buffer.GetLineCount() || (y >= 0 && x >= (int)buffer[y].length())) return;
         char c = buffer[y][x];
-        string open = "{([", close = ")}]";
+        std::string open = "{([", close = ")}]";
         int dir = 0, pair_idx = -1;
-        if ((pair_idx = (int)open.find(c)) != (int)string::npos) dir = 1;
-        else if ((pair_idx = (int)close.find(c)) != (int)string::npos) dir = -1;
+        if ((pair_idx = (int)open.find(c)) != (int)std::string::npos) dir = 1;
+        else if ((pair_idx = (int)close.find(c)) != (int)std::string::npos) dir = -1;
         if (dir == 0) return;
         char target = (dir == 1) ? close[pair_idx] : open[pair_idx];
         int depth = 0, cy = y, cx = x;
@@ -192,7 +193,7 @@ public:
     void UpdateSuggestion()
     {
         if (!pFuncSuggest) return;
-        string context = "";
+        std::string context = "";
         int line_count = buffer.GetLineCount();
     int start = (y > GHOST_CONTEXT_LINES) ? (y - GHOST_CONTEXT_LINES) : 0;
     int end = (y + GHOST_CONTEXT_LINES < line_count) ? (y + GHOST_CONTEXT_LINES) : line_count;
@@ -212,10 +213,10 @@ public:
 
     void DetectLanguage()
     {
-        string fname = buffer.GetFilename();
+        std::string fname = buffer.GetFilename();
         size_t dot = fname.find_last_of(".");
-        string ext = "";
-        if (dot != string::npos && dot < fname.length() - 1) ext = fname.substr(dot + 1);
+        std::string ext = "";
+        if (dot != std::string::npos && dot < fname.length() - 1) ext = fname.substr(dot + 1);
         if (ext == "cpp" || ext == "c" || ext == "h" || ext == "hpp") rules = {1, "C++", {"int", "void", "return", "include", "iostream", "std", "cout", "endl", "using", "namespace", "class", "public", "private", "if", "else", "for", "while"}};
         else if (ext == "py") rules = {2, "Python", {"def", "class", "import", "from", "return", "if", "elif", "else", "for", "while", "print"}};
         else if (ext == "js" || ext == "mjs") rules = {3, "JavaScript", {"function", "const", "let", "var", "async", "await", "import", "export", "class", "extends", "if", "else", "for", "while", "return", "try", "catch", "throw", "new", "this", "super", "true", "false", "null", "undefined", "break", "continue", "switch", "case", "default"}};
@@ -224,7 +225,7 @@ public:
         else rules = {0, "Text", {}};
     }
 
-    void LoadFile(string fname)
+    void LoadFile(std::string fname)
     {
         buffer.LoadFile(fname);
         if (buffer.IsEmpty()) {
@@ -247,7 +248,7 @@ public:
         sidebar_paths.push_back("..");
         try {
             for (const auto& entry : fs::directory_iterator(current_dir)) sidebar_paths.push_back(entry.path());
-            sort(sidebar_paths.begin() + 1, sidebar_paths.end());
+            std::sort(sidebar_paths.begin() + 1, sidebar_paths.end());
         } catch(const std::exception& e) {
             std::cerr << "Sidebar error: " << e.what() << std::endl;
         }
@@ -274,7 +275,7 @@ public:
 
     void DrawLine(int row, int buf_idx, int max_x, int sidebar_w)
     {
-        string line = buffer[buf_idx];
+        std::string line = buffer[buf_idx];
         bool has_err = cpp_errors.count(buf_idx);
         attron(COLOR_PAIR(has_err ? CP_ERROR : CP_LINENUM));
         mvprintw(row, sidebar_w, "%3d ", buf_idx + 1);
@@ -301,7 +302,7 @@ public:
                 cur_x++;
                 attroff(COLOR_PAIR(CP_ORANGE));
             } else if (isalpha(line[i]) || line[i] == '#' || line[i] == '_') {
-                string w = "";
+                std::string w = "";
                 while(i < (int)line.length() && (isalnum(line[i]) || line[i]=='#' || line[i]=='_')) w += line[i++];
                 i--;
                 bool is_kw = false;
@@ -337,11 +338,11 @@ public:
         if (buffer.GetFilename().empty()) return;
         buffer.SaveFile();
         buffer.SetModified(false);
-        last_save_time = chrono::steady_clock::now();
+        last_save_time = std::chrono::steady_clock::now();
         Notify("Saved!");
     }
 
-    string Prompt(string msg)
+    std::string Prompt(std::string msg)
     {
         int max_y, max_x;
         getmaxyx(stdscr, max_y, max_x);
@@ -352,7 +353,7 @@ public:
         char b[PROMPT_BUFFER_SIZE];
         getnstr(b, PROMPT_BUFFER_SIZE - 1);
         noecho();
-        return string(b);
+        return std::string(b);
     }
 
     void CompileAndRun()
@@ -361,12 +362,12 @@ public:
         def_prog_mode();
         endwin();
         system("reset -e && clear");
-        string curr_file = buffer.GetFilename();
-        string cmd = "";
+        std::string curr_file = buffer.GetFilename();
+        std::string cmd = "";
         // Extract extension after last dot for proper detection (not substring match)
-        string ext = "";
+        std::string ext = "";
         size_t dot = curr_file.find_last_of(".");
-        if (dot != string::npos) ext = curr_file.substr(dot + 1);
+        if (dot != std::string::npos) ext = curr_file.substr(dot + 1);
         // Shell-safe quoting for filenames with spaces
         if (ext == "cpp" || ext == "c" || ext == "hpp" || ext == "cc" || ext == "hh")
             cmd = "g++ \"" + curr_file + "\" -o run && ./run";
@@ -375,12 +376,12 @@ public:
         else if (ext == "go") cmd = "go run \"" + curr_file + "\"";
         else if (ext == "js" || ext == "mjs") cmd = "node \"" + curr_file + "\"";
         if(!cmd.empty()) {
-            cout<<"\033[1;33m>> VIX EXECUTION: "<<cmd<<"\033[0m\n";
+            std::cout<<"\033[1;33m>> VIX EXECUTION: "<<cmd<<"\033[0m\n";
             system(cmd.c_str());
         }
-        cout<<"\nPress Enter...";
-        cin.ignore();
-        cin.get();
+        std::cout<<"\nPress Enter...";
+        std::cin.ignore();
+        std::cin.get();
         reset_prog_mode();
         refresh();
     }
@@ -391,8 +392,8 @@ public:
         int my, mx;
         getmaxyx(stdscr, my, mx);
         int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
-        auto now = chrono::steady_clock::now();
-        if (buffer.IsModified() && chrono::duration_cast<chrono::seconds>(now - last_save_time).count() >= AUTO_SAVE_INTERVAL_SEC && buffer.GetLineCount() > 0) SaveFile();
+        auto now = std::chrono::steady_clock::now();
+        if (buffer.IsModified() && std::chrono::duration_cast<std::chrono::seconds>(now - last_save_time).count() >= AUTO_SAVE_INTERVAL_SEC && buffer.GetLineCount() > 0) SaveFile();
         if (show_sidebar) {
             attron(COLOR_PAIR(CP_SIDEBAR));
             for(int i=0; i<my-1; i++) mvaddch(i, sw-1, '|');
@@ -412,9 +413,9 @@ public:
                 if (idx >= (int)sidebar_paths.size()) break;
 
                 if (focus_sidebar && idx == sidebar_sel) attron(COLOR_PAIR(CP_SELECT));
-                string n = sidebar_paths[idx].filename().string();
+                std::string n = sidebar_paths[idx].filename().string();
                 if(n=="") n="..";
-                string ex = sidebar_paths[idx].extension().string();
+                std::string ex = sidebar_paths[idx].extension().string();
                 int c = CP_DEFAULT;
                 if(ex==".py") c=CP_CYAN;
                 else if(ex==".cpp"||ex==".h"||ex==".hpp") c=CP_SIDEBAR;
@@ -423,7 +424,7 @@ public:
                 else if(ex==".js"||ex==".json") c=CP_STRING;
                 if(fs::is_directory(sidebar_paths[idx])) attron(A_BOLD | COLOR_PAIR(CP_KEYWORD));
                 else attron(COLOR_PAIR(c));
-                mvprintw(i+1, 1, " %-18s", n.substr(0, min((size_t)18, n.length())).c_str());
+                mvprintw(i+1, 1, " %-18s", n.substr(0, std::min((size_t)18, n.length())).c_str());
                 attroff(A_BOLD | COLOR_PAIR(CP_KEYWORD) | COLOR_PAIR(c) | COLOR_PAIR(CP_SELECT));
             }
             attroff(COLOR_PAIR(CP_SIDEBAR));
@@ -436,7 +437,7 @@ public:
         mvhline(my-1, 0, ' ', mx);
         if (cpp_errors.count(y)) mvprintw(my-1, 1, "![LINTER] %s", cpp_errors[y].c_str());
         else {
-            if(chrono::duration_cast<chrono::seconds>(now-msg_time).count()<STATUS_MSG_TIMEOUT_SEC) mvprintw(my-1, 1, "%s", status_msg.c_str());
+            if(std::chrono::duration_cast<std::chrono::seconds>(now-msg_time).count()<STATUS_MSG_TIMEOUT_SEC) mvprintw(my-1, 1, "%s", status_msg.c_str());
             else mvprintw(my-1, 1, " VIX | %s | L:%d C:%d | ^H Help", buffer.GetFilename().c_str(), y+1, x+1);
         }
         attroff(COLOR_PAIR(CP_STATUS));
@@ -496,7 +497,7 @@ public:
                             int clicked_x = event.x - (show_sidebar ? SIDEBAR_WIDTH : 0) - 4; // Adjust for line num
                             if (clicked_y >= 0 && clicked_y < buffer.GetLineCount()) {
                                 y = clicked_y;
-                                x = max(0, min((int)buffer[y].length(), clicked_x));
+                                x = std::max(0, std::min((int)buffer[y].length(), clicked_x));
                             }
                         }
                     }
@@ -537,9 +538,9 @@ public:
                 if(ch == KEY_UP && sidebar_sel > 0) sidebar_sel--;
                 else if(ch == KEY_DOWN && sidebar_sel < (int)sidebar_paths.size()-1) sidebar_sel++;
                 else if(ch == 'a') {
-                    string n = Prompt("New File: ");
+                    std::string n = Prompt("New File: ");
                     if(!n.empty()) {
-                        ofstream f(n);
+                        std::ofstream f(n);
                         f.close();
                         UpdateSidebar();
                     }
@@ -562,20 +563,20 @@ public:
             } else {
                 if (ch == 9) {
                     if(!ghost_text.empty()) {
-                        auto cmd = make_unique<InsertCommand>(&buffer, ghost_text, y, x);
-                        history.execute(move(cmd));
+                        auto cmd = std::make_unique<InsertCommand>(&buffer, ghost_text, y, x);
+                        history.execute(std::move(cmd));
                         x+=ghost_text.length();
                         ghost_text="";
                     } else {
-                        auto cmd = make_unique<InsertCommand>(&buffer, "  ", y, x);
-                        history.execute(move(cmd));
+                        auto cmd = std::make_unique<InsertCommand>(&buffer, "  ", y, x);
+                        history.execute(std::move(cmd));
                         x+=2;
                     }
                 } else if (ch == CTRL('k')) {
                     if(!buffer.IsEmpty() && y < buffer.GetLineCount()) {
                         clipboard=buffer[y];
-                        auto cmd = make_unique<DeleteCommand>(&buffer, clipboard, y, 0);
-                        history.execute(move(cmd));
+                        auto cmd = std::make_unique<DeleteCommand>(&buffer, clipboard, y, 0);
+                        history.execute(std::move(cmd));
                         x=0;
                     }
                 } else if (ch == CTRL('c')) {
@@ -583,12 +584,12 @@ public:
                     Notify("Copied");
                 } else if (ch == CTRL('v')) {
                     if(!clipboard.empty()) {
-                        auto cmd = make_unique<InsertCommand>(&buffer, clipboard, y, x);
-                        history.execute(move(cmd));
+                        auto cmd = std::make_unique<InsertCommand>(&buffer, clipboard, y, x);
+                        history.execute(std::move(cmd));
                         x += clipboard.length();
                     }
                 } else if (ch == CTRL('f')) {
-                    string q = Prompt("Find: ");
+                    std::string q = Prompt("Find: ");
                     if (q.empty()) q = last_search;
                     if (q.empty()) { Notify("No search term"); continue; }
                     last_search = q;
@@ -596,26 +597,26 @@ public:
                     int start_y = y, start_x = x + 1;
                     for (int i = start_y; i < buffer.GetLineCount() && !found; i++) {
                         size_t pos = (i == start_y) ? buffer[i].find(q, start_x) : buffer[i].find(q);
-                        if (pos != string::npos) { y = i; x = (int)pos; found = true; }
+                        if (pos != std::string::npos) { y = i; x = (int)pos; found = true; }
                     }
                     if (!found) {
                         for (int i = 0; i < start_y && !found; i++) {
                             size_t pos = buffer[i].find(q);
-                            if (pos != string::npos) { y = i; x = (int)pos; found = true; }
+                            if (pos != std::string::npos) { y = i; x = (int)pos; found = true; }
                         }
                     }
-                    if (found) Notify("Found at L:" + to_string(y+1));
+                    if (found) Notify("Found at L:" + std::to_string(y+1));
                     else Notify("Not found: " + q);
                 } else if (ch == CTRL('g')) {
-                    string input = Prompt("Go To Line: ");
+                    std::string input = Prompt("Go To Line: ");
                     if (input.empty()) { Notify("Cancelled"); continue; }
                     try {
-                        int line = stoi(input);
+                        int line = std::stoi(input);
                         if (line < 1 || line > buffer.GetLineCount()) {
-                            Notify("Line out of range (1-" + to_string(buffer.GetLineCount()) + ")");
+                            Notify("Line out of range (1-" + std::to_string(buffer.GetLineCount()) + ")");
                         } else {
                             y = line - 1; x = 0;
-                            Notify("Jumped to L:" + to_string(line));
+                            Notify("Jumped to L:" + std::to_string(line));
                         }
                     } catch (...) { Notify("Invalid line number"); }
                 } else if (ch == KEY_UP && y>0) y--;
@@ -625,8 +626,8 @@ public:
                 else if (ch == 127 || ch == KEY_BACKSPACE) {
                     if (x > 0 && x <= (int)buffer[y].length()) {
                         char deleted = buffer[y][x-1];
-                        auto cmd = make_unique<DeleteCommand>(&buffer, string(1, deleted), y, x-1);
-                        history.execute(move(cmd));
+                        auto cmd = std::make_unique<DeleteCommand>(&buffer, std::string(1, deleted), y, x-1);
+                        history.execute(std::move(cmd));
                         x--;
                     } else if (y > 0) {
                         // Line-join: not undoable via Command pattern
@@ -638,34 +639,34 @@ public:
                     }
                 } else if (ch == '\n') {
                     if (y < buffer.GetLineCount()) {
-                        string rest = (x < (int)buffer[y].length()) ? buffer[y].substr(x) : "";
+                        std::string rest = (x < (int)buffer[y].length()) ? buffer[y].substr(x) : "";
                         buffer[y] = (x < (int)buffer[y].length()) ? buffer[y].substr(0, x) : buffer[y];
-                        auto cmd = make_unique<NewLineCommand>(&buffer, y + 1, rest);
-                        history.execute(move(cmd));
+                        auto cmd = std::make_unique<NewLineCommand>(&buffer, y + 1, rest);
+                        history.execute(std::move(cmd));
                         y++;
                         x = 0;
                     }
                 } else if (ch >= 32 && ch <= 126) {
                     if (y < buffer.GetLineCount() && x <= (int)buffer[y].length()) {
                         if (ch == '(') {
-                            auto cmd = make_unique<InsertCommand>(&buffer, "()", y, x);
-                            history.execute(move(cmd));
+                            auto cmd = std::make_unique<InsertCommand>(&buffer, "()", y, x);
+                            history.execute(std::move(cmd));
                             x++;
                         } else if (ch == '{') {
-                            auto cmd = make_unique<InsertCommand>(&buffer, "{}", y, x);
-                            history.execute(move(cmd));
+                            auto cmd = std::make_unique<InsertCommand>(&buffer, "{}", y, x);
+                            history.execute(std::move(cmd));
                             x++;
                         } else if (ch == '[') {
-                            auto cmd = make_unique<InsertCommand>(&buffer, "[]", y, x);
-                            history.execute(move(cmd));
+                            auto cmd = std::make_unique<InsertCommand>(&buffer, "[]", y, x);
+                            history.execute(std::move(cmd));
                             x++;
                         } else if (ch == '"') {
-                            auto cmd = make_unique<InsertCommand>(&buffer, "\"\"", y, x);
-                            history.execute(move(cmd));
+                            auto cmd = std::make_unique<InsertCommand>(&buffer, "\"\"", y, x);
+                            history.execute(std::move(cmd));
                             x++;
                         } else {
-                            auto cmd = make_unique<InsertCommand>(&buffer, string(1, (char)ch), y, x);
-                            history.execute(move(cmd));
+                            auto cmd = std::make_unique<InsertCommand>(&buffer, std::string(1, (char)ch), y, x);
+                            history.execute(std::move(cmd));
                             x++;
                         }
                     }
