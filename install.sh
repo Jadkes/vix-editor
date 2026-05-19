@@ -213,6 +213,7 @@ install_binaries() {
     info "Installing binaries to ${BINDIR}..."
     mkdir -p "${BINDIR}"
 
+    rm -f "${BINDIR}/vix" "${BINDIR}/vix_agent"
     cp "${PROJECT_DIR}/vix" "${BINDIR}/vix"
     cp "${PROJECT_DIR}/vix_agent" "${BINDIR}/vix_agent"
     chmod +x "${BINDIR}/vix" "${BINDIR}/vix_agent"
