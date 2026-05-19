@@ -129,7 +129,12 @@ bool NewLineCommand::undo()
     if (insert_before_line >= buffer->GetLineCount()) return false;
     std::string remaining = (*buffer)[insert_before_line];
     buffer->EraseLine(insert_before_line);
-    if (insert_before_line > 0) (*buffer)[insert_before_line - 1] += remaining;
+    if (insert_before_line > 0) {
+        (*buffer)[insert_before_line - 1] += remaining;
+    } else {
+        // Edge case: insert_before_line == 0 means line 0 was newline-merged
+        // (shouldn't happen in normal editing). No previous line to append to.
+    }
     return true;
 }
 

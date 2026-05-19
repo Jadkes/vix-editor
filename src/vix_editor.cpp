@@ -50,7 +50,7 @@ class Vix_ultimate
 private:
     Buffer buffer;
     History history;
-    string current_dir, clipboard;
+    string current_dir, clipboard, last_search;
     int x, y, v_scroll, h_scroll, sidebar_scroll;
     bool running, show_sidebar, focus_sidebar;
     SyntaxRules rules;
@@ -559,40 +559,74 @@ public:
             } else {
                 if (ch == 9) {
                     if(!ghost_text.empty()) {
-                        buffer[y].insert(x, ghost_text);
+                        auto cmd = make_unique<InsertCommand>(&buffer, ghost_text, y, x);
+                        history.execute(move(cmd));
                         x+=ghost_text.length();
                         ghost_text="";
-                        buffer.SetModified(true);
                     } else {
-                        buffer[y].insert(x, "  ");
+                        auto cmd = make_unique<InsertCommand>(&buffer, "  ", y, x);
+                        history.execute(move(cmd));
                         x+=2;
                     }
                 } else if (ch == CTRL('k')) {
                     if(!buffer.IsEmpty() && y < buffer.GetLineCount()) {
                         clipboard=buffer[y];
-                        buffer.EraseLine(y);
-                        if(y>=buffer.GetLineCount() && y > 0) y=buffer.GetLineCount()-1;
-                        else if (y >= buffer.GetLineCount()) y = 0;
+                        auto cmd = make_unique<DeleteCommand>(&buffer, clipboard, y, 0);
+                        history.execute(move(cmd));
                         x=0;
-                        buffer.SetModified(true);
                     }
                 } else if (ch == CTRL('c')) {
                     clipboard = buffer[y];
                     Notify("Copied");
                 } else if (ch == CTRL('v')) {
                     if(!clipboard.empty()) {
-                        buffer.InsertLine(++y, clipboard);
-                        buffer.SetModified(true);
+                        auto cmd = make_unique<InsertCommand>(&buffer, clipboard, y, x);
+                        history.execute(move(cmd));
+                        x += clipboard.length();
                     }
+                } else if (ch == CTRL('f')) {
+                    string q = Prompt("Find: ");
+                    if (q.empty()) q = last_search;
+                    if (q.empty()) { Notify("No search term"); continue; }
+                    last_search = q;
+                    bool found = false;
+                    int start_y = y, start_x = x + 1;
+                    for (int i = start_y; i < buffer.GetLineCount() && !found; i++) {
+                        size_t pos = (i == start_y) ? buffer[i].find(q, start_x) : buffer[i].find(q);
+                        if (pos != string::npos) { y = i; x = (int)pos; found = true; }
+                    }
+                    if (!found) {
+                        for (int i = 0; i < start_y && !found; i++) {
+                            size_t pos = buffer[i].find(q);
+                            if (pos != string::npos) { y = i; x = (int)pos; found = true; }
+                        }
+                    }
+                    if (found) Notify("Found at L:" + to_string(y+1));
+                    else Notify("Not found: " + q);
+                } else if (ch == CTRL('g')) {
+                    string input = Prompt("Go To Line: ");
+                    if (input.empty()) { Notify("Cancelled"); continue; }
+                    try {
+                        int line = stoi(input);
+                        if (line < 1 || line > buffer.GetLineCount()) {
+                            Notify("Line out of range (1-" + to_string(buffer.GetLineCount()) + ")");
+                        } else {
+                            y = line - 1; x = 0;
+                            Notify("Jumped to L:" + to_string(line));
+                        }
+                    } catch (...) { Notify("Invalid line number"); }
                 } else if (ch == KEY_UP && y>0) y--;
                 else if (ch == KEY_DOWN && y< buffer.GetLineCount()-1) y++;
                 else if (ch == KEY_LEFT && x>0) x--;
                 else if (ch == KEY_RIGHT && y < buffer.GetLineCount() && x<(int)buffer[y].length()) x++;
                 else if (ch == 127 || ch == KEY_BACKSPACE) {
                     if (x > 0 && x <= (int)buffer[y].length()) {
-                        buffer[y].erase(--x, 1);
-                        buffer.SetModified(true);
+                        char deleted = buffer[y][x-1];
+                        auto cmd = make_unique<DeleteCommand>(&buffer, string(1, deleted), y, x-1);
+                        history.execute(move(cmd));
+                        x--;
                     } else if (y > 0) {
+                        // Line-join: not undoable via Command pattern
                         x = (int)buffer[y-1].length();
                         buffer[y-1] += buffer[y];
                         buffer.EraseLine(y);
@@ -603,26 +637,33 @@ public:
                     if (y < buffer.GetLineCount()) {
                         string rest = (x < (int)buffer[y].length()) ? buffer[y].substr(x) : "";
                         buffer[y] = (x < (int)buffer[y].length()) ? buffer[y].substr(0, x) : buffer[y];
-                        buffer.InsertLine(++y, rest);
-                        x=0;
-                        buffer.SetModified(true);
+                        auto cmd = make_unique<NewLineCommand>(&buffer, y + 1, rest);
+                        history.execute(move(cmd));
+                        y++;
+                        x = 0;
                     }
                 } else if (ch >= 32 && ch <= 126) {
                     if (y < buffer.GetLineCount() && x <= (int)buffer[y].length()) {
-                        buffer[y].insert(x++, 1, (char)ch);
-                        buffer.SetModified(true);
                         if (ch == '(') {
-                            buffer[y].insert(x, ")");
-                            buffer.SetModified(true);
+                            auto cmd = make_unique<InsertCommand>(&buffer, "()", y, x);
+                            history.execute(move(cmd));
+                            x++;
                         } else if (ch == '{') {
-                            buffer[y].insert(x, "}");
-                            buffer.SetModified(true);
+                            auto cmd = make_unique<InsertCommand>(&buffer, "{}", y, x);
+                            history.execute(move(cmd));
+                            x++;
                         } else if (ch == '[') {
-                            buffer[y].insert(x, "]");
-                            buffer.SetModified(true);
+                            auto cmd = make_unique<InsertCommand>(&buffer, "[]", y, x);
+                            history.execute(move(cmd));
+                            x++;
                         } else if (ch == '"') {
-                            buffer[y].insert(x, "\"");
-                            buffer.SetModified(true);
+                            auto cmd = make_unique<InsertCommand>(&buffer, "\"\"", y, x);
+                            history.execute(move(cmd));
+                            x++;
+                        } else {
+                            auto cmd = make_unique<InsertCommand>(&buffer, string(1, (char)ch), y, x);
+                            history.execute(move(cmd));
+                            x++;
                         }
                     }
                 }
