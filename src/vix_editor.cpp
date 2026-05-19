@@ -52,7 +52,7 @@ private:
     History history;
     string current_dir, clipboard;
     int x, y, v_scroll, h_scroll, sidebar_scroll;
-    bool running, modified, show_sidebar, focus_sidebar;
+    bool running, show_sidebar, focus_sidebar;
     SyntaxRules rules;
     vector<fs::path> sidebar_paths;
     int sidebar_sel;
@@ -68,10 +68,20 @@ private:
         bool active;
     } match_pos;
 
+    // Named constants - extracted from magic numbers
+    static constexpr int SIDEBAR_WIDTH = 22;
+    static constexpr int AUTO_SAVE_INTERVAL_SEC = 20;
+    static constexpr size_t HISTORY_MAX_LEVELS = 50;
+    static constexpr int HELP_HEIGHT = 12;
+    static constexpr int HELP_WIDTH = 50;
+    static constexpr int GHOST_CONTEXT_LINES = 15;
+    static constexpr int PROMPT_BUFFER_SIZE = 256;
+    static constexpr int STATUS_MSG_TIMEOUT_SEC = 3;
+
 public:
-    Vix_ultimate(string fname) : x(0), y(0), v_scroll(0), h_scroll(0), sidebar_scroll(0),
-        running(true), modified(false), show_sidebar(true),
-        history(50), focus_sidebar(false), sidebar_sel(0)
+    Vix_ultimate(string fname) : history(HISTORY_MAX_LEVELS),
+        x(0), y(0), v_scroll(0), h_scroll(0), sidebar_scroll(0),
+        running(true), show_sidebar(true), focus_sidebar(false), sidebar_sel(0)
     {
         current_dir = fs::current_path().string();
         last_save_time = chrono::steady_clock::now();
@@ -184,18 +194,20 @@ public:
         if (!pFuncSuggest) return;
         string context = "";
         int line_count = buffer.GetLineCount();
-        int start = (y > 15) ? (y - 15) : 0;
-        int end = (y + 15 < line_count) ? (y + 15) : line_count;
+    int start = (y > GHOST_CONTEXT_LINES) ? (y - GHOST_CONTEXT_LINES) : 0;
+    int end = (y + GHOST_CONTEXT_LINES < line_count) ? (y + GHOST_CONTEXT_LINES) : line_count;
         for(int i = start; i < end; i++) context += buffer[i] + "\n";
         PyObject *pArgs = PyTuple_New(2);
         PyTuple_SetItem(pArgs, 0, PyUnicode_FromString(buffer[y].substr(0, x).c_str()));
         PyTuple_SetItem(pArgs, 1, PyUnicode_FromString(context.c_str()));
         PyObject *pRes = PyObject_CallObject(pFuncSuggest, pArgs);
         Py_DECREF(pArgs);
-        if (pRes && PyUnicode_Check(pRes)) {
-            ghost_text = PyUnicode_AsUTF8(pRes);
+        if (pRes) {
+            if (PyUnicode_Check(pRes)) {
+                ghost_text = PyUnicode_AsUTF8(pRes);
+            }
             Py_XDECREF(pRes);
-        } else ghost_text = "";
+        }
     }
 
     void DetectLanguage()
@@ -220,7 +232,7 @@ public:
             return;
         }
         DetectLanguage();
-        modified = false;
+        buffer.SetModified(false);
         y = 0;
         x = 0;
         Notify("Opened " + fname);
@@ -321,7 +333,7 @@ public:
         }
         if (buffer.GetFilename().empty()) return;
         buffer.SaveFile();
-        modified = buffer.IsModified() ? true : false;
+        buffer.SetModified(false);
         last_save_time = chrono::steady_clock::now();
         Notify("Saved!");
     }
@@ -334,8 +346,8 @@ public:
         mvhline(max_y-1, 0, ' ', max_x);
         mvprintw(max_y-1, 1, "%s", msg.c_str());
         echo();
-        char b[256];
-        getnstr(b, 255);
+        char b[PROMPT_BUFFER_SIZE];
+        getnstr(b, PROMPT_BUFFER_SIZE - 1);
         noecho();
         return string(b);
     }
@@ -348,8 +360,17 @@ public:
         system("reset -e && clear");
         string curr_file = buffer.GetFilename();
         string cmd = "";
-        if(curr_file.find(".cpp")!=string::npos) cmd="g++ "+curr_file+" -o run && ./run";
-        else if(curr_file.find(".py")!=string::npos) cmd="python3 "+curr_file;
+        // Extract extension after last dot for proper detection (not substring match)
+        string ext = "";
+        size_t dot = curr_file.find_last_of(".");
+        if (dot != string::npos) ext = curr_file.substr(dot + 1);
+        // Shell-safe quoting for filenames with spaces
+        if (ext == "cpp" || ext == "c" || ext == "hpp" || ext == "cc" || ext == "hh")
+            cmd = "g++ \"" + curr_file + "\" -o run && ./run";
+        else if (ext == "py") cmd = "python3 \"" + curr_file + "\"";
+        else if (ext == "rs") cmd = "rustc \"" + curr_file + "\" -o run && ./run";
+        else if (ext == "go") cmd = "go run \"" + curr_file + "\"";
+        else if (ext == "js" || ext == "mjs") cmd = "node \"" + curr_file + "\"";
         if(!cmd.empty()) {
             cout<<"\033[1;33m>> VIX EXECUTION: "<<cmd<<"\033[0m\n";
             system(cmd.c_str());
@@ -366,9 +387,9 @@ public:
         erase();
         int my, mx;
         getmaxyx(stdscr, my, mx);
-        int sw = show_sidebar ? 22 : 0;
+        int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
         auto now = chrono::steady_clock::now();
-        if (modified && chrono::duration_cast<chrono::seconds>(now - last_save_time).count() >= 20 && buffer.GetLineCount() > 0) SaveFile();
+        if (buffer.IsModified() && chrono::duration_cast<chrono::seconds>(now - last_save_time).count() >= AUTO_SAVE_INTERVAL_SEC && buffer.GetLineCount() > 0) SaveFile();
         if (show_sidebar) {
             attron(COLOR_PAIR(CP_SIDEBAR));
             for(int i=0; i<my-1; i++) mvaddch(i, sw-1, '|');
@@ -412,7 +433,7 @@ public:
         mvhline(my-1, 0, ' ', mx);
         if (cpp_errors.count(y)) mvprintw(my-1, 1, "![LINTER] %s", cpp_errors[y].c_str());
         else {
-            if(chrono::duration_cast<chrono::seconds>(now-msg_time).count()<3) mvprintw(my-1, 1, "%s", status_msg.c_str());
+            if(chrono::duration_cast<chrono::seconds>(now-msg_time).count()<STATUS_MSG_TIMEOUT_SEC) mvprintw(my-1, 1, "%s", status_msg.c_str());
             else mvprintw(my-1, 1, " VIX | %s | L:%d C:%d | ^H Help", buffer.GetFilename().c_str(), y+1, x+1);
         }
         attroff(COLOR_PAIR(CP_STATUS));
@@ -448,19 +469,19 @@ public:
                 MEVENT event;
                 if (getmouse(&event) == OK) {
                     if (event.bstate & BUTTON4_PRESSED) { // Scroll Up
-                        if (show_sidebar && event.x < 22) {
+                        if (show_sidebar && event.x < SIDEBAR_WIDTH) {
                             if (sidebar_sel > 0) sidebar_sel--;
                         } else {
                             if (v_scroll > 0) v_scroll--;
                         }
                     } else if (event.bstate & BUTTON5_PRESSED) { // Scroll Down
-                        if (show_sidebar && event.x < 22) {
+                        if (show_sidebar && event.x < SIDEBAR_WIDTH) {
                             if (sidebar_sel < (int)sidebar_paths.size() - 1) sidebar_sel++;
                         } else {
                             if (v_scroll < buffer.GetLineCount() - 1) v_scroll++;
                         }
                     } else if (event.bstate & BUTTON1_PRESSED) { // Left Click
-                        if (show_sidebar && event.x < 22) {
+                        if (show_sidebar && event.x < SIDEBAR_WIDTH) {
                             focus_sidebar = true;
                             int clicked_idx = event.y - 1; // Adjust for header
                             if (clicked_idx >= 0 && clicked_idx < (int)sidebar_paths.size()) {
@@ -469,7 +490,7 @@ public:
                         } else {
                             focus_sidebar = false;
                             int clicked_y = event.y + v_scroll;
-                            int clicked_x = event.x - (show_sidebar ? 22 : 0) - 4; // Adjust for line num
+                            int clicked_x = event.x - (show_sidebar ? SIDEBAR_WIDTH : 0) - 4; // Adjust for line num
                             if (clicked_y >= 0 && clicked_y < buffer.GetLineCount()) {
                                 y = clicked_y;
                                 x = max(0, min((int)buffer[y].length(), clicked_x));
@@ -486,7 +507,7 @@ public:
             if (ch == CTRL('w')) focus_sidebar = !focus_sidebar;
             if (ch == CTRL('t')) show_sidebar = !show_sidebar;
             if (ch == CTRL('h')) {
-                WINDOW* hw = newwin(12, 50, (my-12)/2, (mx-50)/2);
+                WINDOW* hw = newwin(HELP_HEIGHT, HELP_WIDTH, (my-HELP_HEIGHT)/2, (mx-HELP_WIDTH)/2);
                 if (hw) {
                     box(hw, 0, 0);
                     mvwprintw(hw, 0, 2, " HELP ");
@@ -541,7 +562,7 @@ public:
                         buffer[y].insert(x, ghost_text);
                         x+=ghost_text.length();
                         ghost_text="";
-                        modified=true;
+                        buffer.SetModified(true);
                     } else {
                         buffer[y].insert(x, "  ");
                         x+=2;
@@ -553,7 +574,7 @@ public:
                         if(y>=buffer.GetLineCount() && y > 0) y=buffer.GetLineCount()-1;
                         else if (y >= buffer.GetLineCount()) y = 0;
                         x=0;
-                        modified=true;
+                        buffer.SetModified(true);
                     }
                 } else if (ch == CTRL('c')) {
                     clipboard = buffer[y];
@@ -561,7 +582,7 @@ public:
                 } else if (ch == CTRL('v')) {
                     if(!clipboard.empty()) {
                         buffer.InsertLine(++y, clipboard);
-                        modified=true;
+                        buffer.SetModified(true);
                     }
                 } else if (ch == KEY_UP && y>0) y--;
                 else if (ch == KEY_DOWN && y< buffer.GetLineCount()-1) y++;
@@ -570,13 +591,13 @@ public:
                 else if (ch == 127 || ch == KEY_BACKSPACE) {
                     if (x > 0 && x <= (int)buffer[y].length()) {
                         buffer[y].erase(--x, 1);
-                        modified = true;
+                        buffer.SetModified(true);
                     } else if (y > 0) {
                         x = (int)buffer[y-1].length();
                         buffer[y-1] += buffer[y];
                         buffer.EraseLine(y);
                         y--;
-                        modified = true;
+                        buffer.SetModified(true);
                     }
                 } else if (ch == '\n') {
                     if (y < buffer.GetLineCount()) {
@@ -584,24 +605,24 @@ public:
                         buffer[y] = (x < (int)buffer[y].length()) ? buffer[y].substr(0, x) : buffer[y];
                         buffer.InsertLine(++y, rest);
                         x=0;
-                        modified=true;
+                        buffer.SetModified(true);
                     }
                 } else if (ch >= 32 && ch <= 126) {
                     if (y < buffer.GetLineCount() && x <= (int)buffer[y].length()) {
                         buffer[y].insert(x++, 1, (char)ch);
-                        modified=true;
+                        buffer.SetModified(true);
                         if (ch == '(') {
                             buffer[y].insert(x, ")");
-                            modified=true;
+                            buffer.SetModified(true);
                         } else if (ch == '{') {
                             buffer[y].insert(x, "}");
-                            modified=true;
+                            buffer.SetModified(true);
                         } else if (ch == '[') {
                             buffer[y].insert(x, "]");
-                            modified=true;
+                            buffer.SetModified(true);
                         } else if (ch == '"') {
                             buffer[y].insert(x, "\"");
-                            modified=true;
+                            buffer.SetModified(true);
                         }
                     }
                 }

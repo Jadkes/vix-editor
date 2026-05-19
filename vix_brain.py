@@ -309,6 +309,7 @@ class Jarvis_brain:
         brace_stack = []
         in_string = False
         string_char = None
+        in_block_comment = False
         
         for i, line in enumerate(lines):
             clean = line.strip()
@@ -325,7 +326,21 @@ class Jarvis_brain:
                 if '=' in clean or '(' in clean:
                     errors.append({"line": i, "msg": "Missing semicolon?"})
 
-            for c in line:
+            # Strip single-line block comments /* ... */
+            line_no_block = re.sub(r'/\*.*?\*/', '', line)
+            
+            # Handle multi-line block comments
+            if in_block_comment:
+                if '*/' in line_no_block:
+                    in_block_comment = False
+                    line_no_block = line_no_block.split('*/', 1)[1]
+                else:
+                    line_no_block = ''
+            elif '/*' in line_no_block:
+                in_block_comment = True
+                line_no_block = line_no_block.split('/*', 1)[0]
+
+            for c in line_no_block:
                 if c in '"\'' and not in_string:
                     in_string = True
                     string_char = c

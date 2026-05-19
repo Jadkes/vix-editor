@@ -44,6 +44,9 @@ vector<string> split_string(const string& str, char delimiter)
 class JarvisAgent
 {
 private:
+    // Named constants
+    static constexpr int LS_COLUMNS = 5;
+
     PyObject *pModule;
     PyObject *pFuncProcess;
     PyObject *pFuncGenerate;
@@ -145,7 +148,7 @@ public:
                 else cout << WHITE << name << RESET << "  ";
 
                 count++;
-                if(count % 5 == 0) cout << endl;
+                if(count % LS_COLUMNS == 0) cout << endl;
             }
             cout << endl;
             closedir (dir);

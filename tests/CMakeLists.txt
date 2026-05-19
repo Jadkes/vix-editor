@@ -35,7 +35,7 @@ target_include_directories(buffer_test PRIVATE
 )
 target_compile_options(buffer_test PRIVATE -Wall -Wextra)
 
-add_executable(history_test history_test.cpp ../src/history/history.cpp)
+add_executable(history_test history_test.cpp ../src/history/history.cpp ../src/core/buffer.cpp)
 target_link_libraries(history_test PRIVATE GTest::gtest_main)
 target_include_directories(history_test PRIVATE
     ${CMAKE_SOURCE_DIR}/../src

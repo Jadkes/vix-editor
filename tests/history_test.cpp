@@ -1,6 +1,7 @@
 // tests/history_test.cpp - History class unit tests
 #include <gtest/gtest.h>
 #include "history/history.hpp"
+#include "core/buffer.hpp"
 
 TEST(HistoryTest, InitialState)
 {
@@ -14,7 +15,8 @@ TEST(HistoryTest, InitialState)
 TEST(HistoryTest, CanUndoAfterExecute)
 {
     History hist;
-    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    Buffer buf;
+    hist.execute(std::make_unique<InsertCommand>(&buf, "hello", 0, 0));
     EXPECT_TRUE(hist.canUndo());
     EXPECT_FALSE(hist.canRedo());
 }
@@ -22,7 +24,8 @@ TEST(HistoryTest, CanUndoAfterExecute)
 TEST(HistoryTest, Undo)
 {
     History hist;
-    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    Buffer buf;
+    hist.execute(std::make_unique<InsertCommand>(&buf, "hello", 0, 0));
     EXPECT_TRUE(hist.undo());
     EXPECT_FALSE(hist.canUndo());
     EXPECT_TRUE(hist.canRedo());
@@ -32,7 +35,8 @@ TEST(HistoryTest, Undo)
 TEST(HistoryTest, Redo)
 {
     History hist;
-    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    Buffer buf;
+    hist.execute(std::make_unique<InsertCommand>(&buf, "hello", 0, 0));
     hist.undo();
     EXPECT_TRUE(hist.redo());
     EXPECT_TRUE(hist.canUndo());
@@ -42,8 +46,11 @@ TEST(HistoryTest, Redo)
 TEST(HistoryTest, UndoRedoStack)
 {
     History hist;
-    hist.execute(std::make_unique<InsertCommand>("a", 0));
-    hist.execute(std::make_unique<InsertCommand>("b", 1));
+    Buffer buf;
+    buf.PushBack("");
+    buf.PushBack("");
+    hist.execute(std::make_unique<InsertCommand>(&buf, "a", 0, 0));
+    hist.execute(std::make_unique<InsertCommand>(&buf, "b", 1, 0));
     EXPECT_EQ(hist.undoSize(), 2u);
 
     hist.undo();
@@ -58,18 +65,21 @@ TEST(HistoryTest, UndoRedoStack)
 TEST(HistoryTest, NewActionClearsRedo)
 {
     History hist;
-    hist.execute(std::make_unique<InsertCommand>("a", 0));
+    Buffer buf;
+    buf.PushBack("");
+    hist.execute(std::make_unique<InsertCommand>(&buf, "a", 0, 0));
     hist.undo();
     EXPECT_EQ(hist.redoSize(), 1u);
 
-    hist.execute(std::make_unique<InsertCommand>("b", 1));
+    hist.execute(std::make_unique<InsertCommand>(&buf, "b", 1, 0));
     EXPECT_EQ(hist.redoSize(), 0u);
 }
 
 TEST(HistoryTest, Clear)
 {
     History hist;
-    hist.execute(std::make_unique<InsertCommand>("hello", 0));
+    Buffer buf;
+    hist.execute(std::make_unique<InsertCommand>(&buf, "hello", 0, 0));
     hist.clear();
     EXPECT_FALSE(hist.canUndo());
     EXPECT_FALSE(hist.canRedo());
@@ -78,9 +88,12 @@ TEST(HistoryTest, Clear)
 TEST(HistoryTest, MultipleUndo)
 {
     History hist;
-    hist.execute(std::make_unique<InsertCommand>("a", 0));
-    hist.execute(std::make_unique<InsertCommand>("b", 1));
-    hist.execute(std::make_unique<InsertCommand>("c", 2));
+    Buffer buf;
+    buf.PushBack("");
+    buf.PushBack("");
+    hist.execute(std::make_unique<InsertCommand>(&buf, "a", 0, 0));
+    hist.execute(std::make_unique<InsertCommand>(&buf, "b", 1, 0));
+    hist.execute(std::make_unique<InsertCommand>(&buf, "c", 2, 0));
 
     EXPECT_TRUE(hist.undo());
     EXPECT_TRUE(hist.undo());
@@ -90,18 +103,21 @@ TEST(HistoryTest, MultipleUndo)
 
 TEST(HistoryTest, InsertCommandDescription)
 {
-    InsertCommand cmd("test", 5);
+    Buffer buf;
+    InsertCommand cmd(&buf, "test", 0, 5);
     EXPECT_EQ(cmd.description(), "Insert: test");
 }
 
 TEST(HistoryTest, DeleteCommandDescription)
 {
-    DeleteCommand cmd("test", 5);
+    Buffer buf;
+    DeleteCommand cmd(&buf, "test", 0, 5);
     EXPECT_EQ(cmd.description(), "Delete: test");
 }
 
 TEST(HistoryTest, NewLineCommandDescription)
 {
-    NewLineCommand cmd(10);
+    Buffer buf;
+    NewLineCommand cmd(&buf, 10, "");
     EXPECT_EQ(cmd.description(), "NewLine at 10");
 }

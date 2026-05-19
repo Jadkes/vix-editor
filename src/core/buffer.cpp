@@ -85,6 +85,9 @@ std::string Buffer::GetLine(int n) const
 
 std::string& Buffer::operator[](int n)
 {
+    if (n < 0 || n >= (int)lines.size()) {
+        throw std::out_of_range("Buffer::operator[]: index " + std::to_string(n) + " out of range");
+    }
     return lines[n];
 }
 

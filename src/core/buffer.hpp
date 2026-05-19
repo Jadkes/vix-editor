@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <stdexcept>
 
 class Buffer
 {
@@ -19,6 +20,7 @@ public:
     void Delete(int line, int col, int count);
 
     std::string GetLine(int n) const;
+    // Throws std::out_of_range if n < 0 or n >= line count
     std::string& operator[](int n);
     const std::vector<std::string>& GetAllLines() const;
     int GetLineCount() const;
