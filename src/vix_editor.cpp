@@ -16,6 +16,7 @@
 #include <termios.h>
 #include <cctype>
 #include <memory>
+#include <cstdio>
 #include "core/buffer.hpp"
 #include "history/history.hpp"
 
@@ -110,6 +111,25 @@ public:
     {
         status_msg = (err ? "![ERR] " : ">> ") + msg;
         msg_time = std::chrono::steady_clock::now();
+    }
+
+    void CopyToSystemClipboard(const std::string& text) {
+        FILE* pipe = popen("xclip -selection clipboard", "w");
+        if (pipe) {
+            fwrite(text.c_str(), 1, text.size(), pipe);
+            pclose(pipe);
+        }
+    }
+
+    std::string PasteFromSystemClipboard() {
+        std::string result;
+        FILE* pipe = popen("xclip -selection clipboard -o", "r");
+        if (pipe) {
+            char buf[1024];
+            while (fgets(buf, sizeof(buf), pipe)) result += buf;
+            pclose(pipe);
+        }
+        return result;
     }
 
     void InitPython()
@@ -521,6 +541,7 @@ public:
                     mvwprintw(hw, 5, 2, "TAB: AI Ghost Accept");
                     mvwprintw(hw, 6, 2, "^Z: Undo  ^Y: Redo");
                     mvwprintw(hw, 7, 2, "Sidebar: 'a': New File  'd': Delete");
+                    mvwprintw(hw, 8, 2, "^P: System Clipboard Paste");
                     wrefresh(hw);
                     wgetch(hw);
                     delwin(hw);
@@ -581,12 +602,27 @@ public:
                     }
                 } else if (ch == CTRL('c')) {
                     clipboard = buffer[y];
+                    CopyToSystemClipboard(clipboard);
                     Notify("Copied");
                 } else if (ch == CTRL('v')) {
                     if(!clipboard.empty()) {
                         auto cmd = std::make_unique<InsertCommand>(&buffer, clipboard, y, x);
                         history.execute(std::move(cmd));
                         x += clipboard.length();
+                    }
+                } else if (ch == CTRL('p')) {
+                    {
+                        std::string sys_clip = PasteFromSystemClipboard();
+                        if (!sys_clip.empty()) {
+                            if (sys_clip.back() == '\n') sys_clip.pop_back();
+                            clipboard = sys_clip;
+                            auto cmd = std::make_unique<InsertCommand>(&buffer, clipboard, y, x);
+                            history.execute(std::move(cmd));
+                            x += clipboard.length();
+                            Notify("Pasted from system clipboard");
+                        } else {
+                            Notify("No system clipboard content");
+                        }
                     }
                 } else if (ch == CTRL('f')) {
                     std::string q = Prompt("Find: ");
