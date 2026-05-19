@@ -218,6 +218,9 @@ public:
         if (dot != string::npos && dot < fname.length() - 1) ext = fname.substr(dot + 1);
         if (ext == "cpp" || ext == "c" || ext == "h" || ext == "hpp") rules = {1, "C++", {"int", "void", "return", "include", "iostream", "std", "cout", "endl", "using", "namespace", "class", "public", "private", "if", "else", "for", "while"}};
         else if (ext == "py") rules = {2, "Python", {"def", "class", "import", "from", "return", "if", "elif", "else", "for", "while", "print"}};
+        else if (ext == "js" || ext == "mjs") rules = {3, "JavaScript", {"function", "const", "let", "var", "async", "await", "import", "export", "class", "extends", "if", "else", "for", "while", "return", "try", "catch", "throw", "new", "this", "super", "true", "false", "null", "undefined", "break", "continue", "switch", "case", "default"}};
+        else if (ext == "rs") rules = {4, "Rust", {"fn", "let", "mut", "const", "struct", "impl", "trait", "pub", "mod", "use", "crate", "self", "super", "if", "else", "for", "while", "loop", "match", "return", "async", "await", "move", "ref", "type", "where", "unsafe", "static", "true", "false", "Some", "None", "Ok", "Err", "break", "continue", "enum", "dyn"}};
+        else if (ext == "go") rules = {5, "Go", {"func", "var", "const", "type", "struct", "interface", "package", "import", "if", "else", "for", "switch", "case", "return", "go", "defer", "chan", "select", "true", "false", "nil", "make", "new", "len", "cap", "append", "copy", "delete", "map", "range", "panic", "recover", "break", "continue", "default", "fallthrough"}};
         else rules = {0, "Text", {}};
     }
 
