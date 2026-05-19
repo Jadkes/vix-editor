@@ -129,15 +129,63 @@ install_dependencies() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# resolve_python_flags – Detect Python include & link flags, handling the
+#                        `--embed` split introduced in Python 3.8 (required
+#                        on Python 3.14+ where plain --ldflags drops -lpython).
+#
+# Returns a delimited string "INCLUDES|||LDFLAGS".  Caller splits on "|||".
+# Exits with error if python3 or python3-config is unavailable.
+# ---------------------------------------------------------------------------
+resolve_python_flags() {
+    local py_version py_includes py_ldflags
+
+    py_version="$(python3 --version 2>&1 | grep -oP '\d+\.\d+')" || {
+        error "python3 not found. Install Python 3." >&2
+        return 1
+    }
+    info "Detected Python ${py_version}" >&2
+
+    py_includes="$(python3-config --includes)" || {
+        error "python3-config not found. Install python3-devel / python3-dev." >&2
+        return 1
+    }
+
+    # Resolve link flags — try --embed first (Python 3.8+ embed, REQUIRED 3.14+)
+    py_ldflags="$(python3-config --ldflags --embed 2>/dev/null)"
+
+    # If embed failed or result lacks -lpython, try plain --ldflags
+    if [ -z "$py_ldflags" ] || ! echo "$py_ldflags" | grep -q -- '-lpython'; then
+        py_ldflags="$(python3-config --ldflags)"
+    fi
+
+    # Validate: if still no -lpython, try manual fallback
+    if ! echo "$py_ldflags" | grep -q -- '-lpython'; then
+        warn "python3-config returned no -lpython flag. Trying manual resolution..." >&2
+        local libpath="/usr/lib64/libpython${py_version}.so"
+        if [ -f "$libpath" ]; then
+            py_ldflags="-L/usr/lib64 -lpython${py_version} -ldl -lm"
+        else
+            error "Cannot find libpython${py_version}.so. Provide the path manually or install python3-devel matching your Python version." >&2
+            return 1
+        fi
+    fi
+
+    # Export as delimited string (avoids bash scoping issues)
+    echo "${py_includes}|||${py_ldflags}"
+}
+
 # -- Build ---------------------------------------------------------------------
 
 build_binaries() {
-    info "Resolving Python build flags..."
+    local python_flags python_includes python_ldflags
 
-    # Use python3-config for portable include/library paths
-    local python_includes python_ldflags
-    python_includes="$(python3-config --includes)"
-    python_ldflags="$(python3-config --ldflags)"
+    python_flags="$(resolve_python_flags)" || return 1
+    python_includes="${python_flags%%|||*}"
+    python_ldflags="${python_flags##*|||}"
+
+    info "Python include: ${python_includes}"
+    info "Python ldflags: ${python_ldflags}"
 
     local cxxflags="-std=c++20 -Wall ${python_includes}"
     local ldflags="${python_ldflags} -lncurses"
@@ -147,7 +195,7 @@ build_binaries() {
         cd "${PROJECT_DIR}"
         # shellcheck disable=SC2086
         g++ ${VIX_SOURCES} -o vix ${cxxflags} ${ldflags}
-    )
+    ) || { error "vix build failed."; return 1; }
     ok "vix built successfully."
 
     info "Building vix_agent..."
@@ -155,7 +203,7 @@ build_binaries() {
         cd "${PROJECT_DIR}"
         # shellcheck disable=SC2086
         g++ ${AGENT_SOURCES} -o vix_agent ${cxxflags} ${ldflags}
-    )
+    ) || { error "vix_agent build failed."; return 1; }
     ok "vix_agent built successfully."
 }
 
