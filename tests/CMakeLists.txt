@@ -28,7 +28,7 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 
 # Define test executable
-add_executable(buffer_test buffer_test.cpp)
+add_executable(buffer_test buffer_test.cpp ../src/core/buffer.cpp)
 target_link_libraries(buffer_test PRIVATE GTest::gtest_main)
 target_include_directories(buffer_test PRIVATE
     ${CMAKE_SOURCE_DIR}/../src
