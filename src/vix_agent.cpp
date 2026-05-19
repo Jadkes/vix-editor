@@ -153,7 +153,7 @@ public:
             std::cout << std::endl;
             closedir (dir);
         } else {
-            perror ("");
+            perror ("opendir");
         }
     }
 
@@ -220,13 +220,17 @@ public:
         while(true) {
             std::cout << CYAN << "\nYou: " << RESET;
             std::getline(std::cin, input);
+            if (std::cin.eof()) {
+                std::cout << std::endl;
+                break;
+            }
             if(input.empty()) continue;
 
             std::vector<std::string> tokens = split_string(input, ' ');
             std::string cmd = tokens[0];
             for(auto& c : cmd) c = std::tolower(c);
 
-            if(cmd == "exit" || cmd == "quit") {
+            if(cmd == "exit" || cmd == "quit" || cmd == "q") {
                 break;
             } else if(cmd == "help") {
                 std::cout << YELLOW << "Agent Commands:" << RESET << std::endl;
