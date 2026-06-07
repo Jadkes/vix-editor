@@ -1,1 +1,22 @@
+# Compiled binaries
+vix
+vix_agent
+vix_editor
+a.out
+
+# Build directories
+build/
+tests/build/
+
+# Test results
+tests/Testing/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Large data (regenerate or download separately)
+vix_data.json
+
+# Existing
 .sisyphus/
