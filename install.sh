@@ -4,8 +4,7 @@
 #
 # Cross-distro installer for Vix editor suite.
 #          Detects Linux distribution, installs build dependencies,
-#          builds both vix and vix_agent binaries, and installs
-#          them to ~/.local/bin/.
+#          builds the vix binary, and installs it to ~/.local/bin/.
 #
 #
 #   ./install.sh            Full install (deps + build + install)
@@ -28,7 +27,6 @@ SRCDIR="${PROJECT_DIR}/src"
 
 # Files to compile
 VIX_SOURCES="src/vix_editor.cpp src/core/buffer.cpp src/history/history.cpp src/ui/settings.cpp"
-AGENT_SOURCES="src/vix_agent.cpp"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -55,7 +53,7 @@ Usage:
 The installer:
   1. Detects your Linux distribution
   2. Installs required build dependencies (g++, python3-dev, ncurses, xclip)
-  3. Builds vix and vix_agent binaries
+  3. Builds the vix binary
   4. Installs binaries to ~/.local/bin/
   5. Installs python brain to ~/.local/share/vix/
 EOF
@@ -183,24 +181,15 @@ build_binaries() {
         g++ ${VIX_SOURCES} -o vix ${cxxflags} ${ldflags}
     ) || { error "vix build failed."; return 1; }
     ok "vix built successfully."
-
-    info "Building vix_agent..."
-    (
-        cd "${PROJECT_DIR}"
-        # shellcheck disable=SC2086
-        g++ ${AGENT_SOURCES} -o vix_agent ${cxxflags} ${ldflags}
-    ) || { error "vix_agent build failed."; return 1; }
-    ok "vix_agent built successfully."
 }
 
 install_binaries() {
     info "Installing binaries to ${BINDIR}..."
     mkdir -p "${BINDIR}"
 
-    rm -f "${BINDIR}/vix" "${BINDIR}/vix_agent"
+    rm -f "${BINDIR}/vix"
     cp "${PROJECT_DIR}/vix" "${BINDIR}/vix"
-    cp "${PROJECT_DIR}/vix_agent" "${BINDIR}/vix_agent"
-    chmod +x "${BINDIR}/vix" "${BINDIR}/vix_agent"
+    chmod +x "${BINDIR}/vix"
     ok "Binaries installed."
 
     # Install python brain file
@@ -236,12 +225,6 @@ uninstall() {
     if [ -f "${BINDIR}/vix" ]; then
         rm "${BINDIR}/vix"
         info "Removed ${BINDIR}/vix"
-        had_anything=true
-    fi
-
-    if [ -f "${BINDIR}/vix_agent" ]; then
-        rm "${BINDIR}/vix_agent"
-        info "Removed ${BINDIR}/vix_agent"
         had_anything=true
     fi
 
@@ -311,11 +294,6 @@ show_status() {
         printf "  ${GREEN}✓${NC} %s/vix\n" "${BINDIR}"
     else
         printf "  ${RED}✗${NC} %s/vix (not installed)\n" "${BINDIR}"
-    fi
-    if [ -f "${BINDIR}/vix_agent" ]; then
-        printf "  ${GREEN}✓${NC} %s/vix_agent\n" "${BINDIR}"
-    else
-        printf "  ${RED}✗${NC} %s/vix_agent (not installed)\n" "${BINDIR}"
     fi
     if [ -f "${DATADIR}/vix_brain.py" ]; then
         printf "  ${GREEN}✓${NC} %s/vix_brain.py\n" "${DATADIR}"

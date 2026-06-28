@@ -1,6 +1,6 @@
 # CMakeLists.txt - Root build for vix-editor
 #
-# Purpose: Build vix editor and vix_agent binaries with C++20
+# Purpose: Build vix editor binary with C++20
 # Dependencies: Python3 (Development), Curses (ncurses)
 
 cmake_minimum_required(VERSION 3.20)
@@ -30,9 +30,3 @@ add_executable(vix
 target_link_libraries(vix PRIVATE Python3::Python ${CURSES_LIBRARIES})
 target_include_directories(vix PRIVATE ${Python3_INCLUDE_DIRS} ${CURSES_INCLUDE_DIR})
 
-# vix_agent target
-add_executable(vix_agent
-    src/vix_agent.cpp
-)
-target_link_libraries(vix_agent PRIVATE Python3::Python ${CURSES_LIBRARIES})
-target_include_directories(vix_agent PRIVATE ${Python3_INCLUDE_DIRS} ${CURSES_INCLUDE_DIR})
