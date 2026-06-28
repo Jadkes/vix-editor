@@ -2,26 +2,24 @@
 #
 # install.sh - Vix Editor Installer
 #
-# Purpose: Cross-distro installer for Vix editor suite.
+# Cross-distro installer for Vix editor suite.
 #          Detects Linux distribution, installs build dependencies,
 #          builds both vix and vix_agent binaries, and installs
 #          them to ~/.local/bin/.
 #
-# Usage:
+#
 #   ./install.sh            Full install (deps + build + install)
 #   ./install.sh install    Same as above
 #   ./install.sh uninstall  Remove installed files
 #   ./install.sh status     Check current installation state
 #   ./install.sh --help     Show this usage message
 #
-# Design: Self-contained g++ build (no cmake dependency).
+# Self-contained g++ build (no cmake dependency).
 #         All files installed under ~/.local/ (no system-wide changes).
-#
-# Thread-safety: Single-user script, no concurrent usage expected.
+
+
 
 set -euo pipefail
-
-# -- Constants -----------------------------------------------------------------
 
 BINDIR="${HOME}/.local/bin"
 DATADIR="${HOME}/.local/share/vix"
@@ -29,10 +27,8 @@ PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SRCDIR="${PROJECT_DIR}/src"
 
 # Files to compile
-VIX_SOURCES="src/vix_editor.cpp src/core/buffer.cpp src/history/history.cpp"
+VIX_SOURCES="src/vix_editor.cpp src/core/buffer.cpp src/history/history.cpp src/ui/settings.cpp"
 AGENT_SOURCES="src/vix_agent.cpp"
-
-# -- Colors --------------------------------------------------------------------
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -44,8 +40,6 @@ info()  { printf "${CYAN}[INFO]${NC}  %s\n" "$*"; }
 ok()    { printf "${GREEN}[OK]${NC}    %s\n" "$*"; }
 warn()  { printf "${YELLOW}[WARN]${NC}  %s\n" "$*"; }
 error() { printf "${RED}[ERROR]${NC} %s\n" "$*"; }
-
-# -- Help ----------------------------------------------------------------------
 
 show_usage() {
     cat <<EOF
@@ -66,8 +60,6 @@ The installer:
   5. Installs python brain to ~/.local/share/vix/
 EOF
 }
-
-# -- Distribution Detection ----------------------------------------------------
 
 detect_distro() {
     if [ ! -f /etc/os-release ]; then
@@ -96,8 +88,6 @@ detect_distro() {
             ;;
     esac
 }
-
-# -- Dependency Installation ---------------------------------------------------
 
 install_deps_debian() {
     info "Installing dependencies for Debian/Ubuntu..."
@@ -129,14 +119,12 @@ install_dependencies() {
     esac
 }
 
-# ---------------------------------------------------------------------------
 # resolve_python_flags – Detect Python include & link flags, handling the
 #                        `--embed` split introduced in Python 3.8 (required
 #                        on Python 3.14+ where plain --ldflags drops -lpython).
 #
 # Returns a delimited string "INCLUDES|||LDFLAGS".  Caller splits on "|||".
 # Exits with error if python3 or python3-config is unavailable.
-# ---------------------------------------------------------------------------
 resolve_python_flags() {
     local py_version py_includes py_ldflags
 
@@ -175,8 +163,6 @@ resolve_python_flags() {
     echo "${py_includes}|||${py_ldflags}"
 }
 
-# -- Build ---------------------------------------------------------------------
-
 build_binaries() {
     local python_flags python_includes python_ldflags
 
@@ -206,8 +192,6 @@ build_binaries() {
     ) || { error "vix_agent build failed."; return 1; }
     ok "vix_agent built successfully."
 }
-
-# -- Install -------------------------------------------------------------------
 
 install_binaries() {
     info "Installing binaries to ${BINDIR}..."
@@ -246,8 +230,6 @@ install_binaries() {
     esac
 }
 
-# -- Uninstall -----------------------------------------------------------------
-
 uninstall() {
     local had_anything=false
 
@@ -281,8 +263,6 @@ uninstall() {
         info "Nothing to uninstall. Vix editor is not installed."
     fi
 }
-
-# -- Status --------------------------------------------------------------------
 
 check_command() {
     if command -v "$1" &>/dev/null; then
@@ -356,8 +336,6 @@ show_status() {
     esac
     echo ""
 }
-
-# -- Main ----------------------------------------------------------------------
 
 main() {
     local cmd="${1:-}"

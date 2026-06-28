@@ -1,11 +1,8 @@
 /*
  * History - Undo/Redo command pattern implementation
  *
- * Purpose: Manages undo/redo stack for text editor operations using
- *          Command pattern to encapsulate reversible operations.
- * Thread-safety: Not thread-safe (ncurses is single-threaded)
- *
- * Design:
+ *  Manages undo/redo stack for text editor operations using
+ *          Command pattern to encapsulate reversible operation.
  * - Uses Command pattern where each operation is a Command object
  * - Undo pops from undo_stack, pushes to redo_stack
  * - Redo pops from redo_stack, pushes to undo_stack

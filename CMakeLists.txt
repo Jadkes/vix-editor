@@ -25,6 +25,7 @@ add_executable(vix
     src/vix_editor.cpp
     src/core/buffer.cpp
     src/history/history.cpp
+    src/ui/settings.cpp
 )
 target_link_libraries(vix PRIVATE Python3::Python ${CURSES_LIBRARIES})
 target_include_directories(vix PRIVATE ${Python3_INCLUDE_DIRS} ${CURSES_INCLUDE_DIR})

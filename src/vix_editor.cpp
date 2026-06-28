@@ -19,6 +19,7 @@
 #include <cstdio>
 #include "core/buffer.hpp"
 #include "history/history.hpp"
+#include "ui/settings.hpp"
 
 namespace fs = std::filesystem;
 
@@ -40,6 +41,7 @@ namespace fs = std::filesystem;
 #define CP_SELECT  11
 #define CP_GHOST   12
 #define CP_MATCH   13
+#define CP_SEARCH  14
 
 struct SyntaxRules {
     int lang;
@@ -70,9 +72,17 @@ private:
         bool active;
     } match_pos;
 
+    // Search state
+    std::vector<std::pair<int,int>> search_results;
+    int search_idx;
+    std::string search_query;
+    bool in_search_mode;
+    bool in_block_comment;
+
+    Settings settings;
+
     // Named constants - extracted from magic numbers
     static constexpr int SIDEBAR_WIDTH = 22;
-    static constexpr int AUTO_SAVE_INTERVAL_SEC = 20;
     static constexpr size_t HISTORY_MAX_LEVELS = 50;
     static constexpr int HELP_HEIGHT = 12;
     static constexpr int HELP_WIDTH = 50;
@@ -88,13 +98,23 @@ public:
         current_dir = fs::current_path().string();
         last_save_time = std::chrono::steady_clock::now();
         match_pos.active = false;
+        search_idx = -1;
+        in_search_mode = false;
+        in_block_comment = false;
         clipboard = "";
+        LoadSettings(settings);
+        ApplyTheme(themes[settings.theme]);
+        // Create config file on first run if it doesn't exist
+        SaveSettings(settings);
         InitPython();
         DetectLanguage();
         if (!fname.empty()) LoadFile(fname);
         else {
             buffer.PushBack("");
-            buffer.SetFilename("Untitled.cpp");
+            static const char* DEF_EXTS[] = { ".txt", ".cpp", ".py", ".js", ".rs", ".go", ".c" };
+            int lang = settings.default_language;
+            const char* ext = (lang >= 0 && lang <= 6) ? DEF_EXTS[lang] : ".cpp";
+            buffer.SetFilename("Untitled" + std::string(ext));
         }
         UpdateSidebar();
     }
@@ -191,22 +211,70 @@ public:
         if (dir == 0) return;
         char target = (dir == 1) ? close[pair_idx] : open[pair_idx];
         int depth = 0, cy = y, cx = x;
+        // Scan initial line: start one position past the bracket
+        cx += dir;
         while (cy >= 0 && cy < buffer.GetLineCount()) {
-            cx += dir;
-            if (cx < 0 || cx >= (int)buffer[cy].length()) {
-                cy += dir;
-                if (cy >= 0 && cy < buffer.GetLineCount()) cx = (dir == 1) ? 0 : (int)buffer[cy].length() - 1;
-                else break;
-                continue;
-            }
-            if (buffer[cy][cx] == c) depth++;
-            else if (buffer[cy][cx] == target) {
-                if (depth == 0) {
-                    match_pos = {cx, cy, true};
-                    return;
+            // Scan within the current line
+            while (cx >= 0 && cx < (int)buffer[cy].length()) {
+                if (buffer[cy][cx] == c) depth++;
+                else if (buffer[cy][cx] == target) {
+                    if (depth == 0) {
+                        match_pos = {cx, cy, true};
+                        return;
+                    }
+                    depth--;
                 }
-                depth--;
+                cx += dir;
             }
+            // Move to the next (or previous) line
+            cy += dir;
+            if (cy < 0 || cy >= buffer.GetLineCount()) break;
+            cx = (dir == 1) ? 0 : (int)buffer[cy].length() - 1;
+        }
+    }
+
+    void FindAll(const std::string& q)
+    {
+        search_results.clear();
+        search_query = q;
+        search_idx = -1;
+        if (q.empty()) return;
+        for (int i = 0; i < buffer.GetLineCount(); i++) {
+            size_t pos = 0;
+            while ((pos = buffer[i].find(q, pos)) != std::string::npos) {
+                search_results.emplace_back(i, (int)pos);
+                pos++;
+            }
+        }
+        if (!search_results.empty()) {
+            search_idx = 0;
+            y = search_results[0].first;
+            x = search_results[0].second;
+        }
+    }
+
+    void SearchNext()
+    {
+        if (search_results.empty()) return;
+        search_idx = (search_idx + 1) % (int)search_results.size();
+        y = search_results[search_idx].first;
+        x = search_results[search_idx].second;
+    }
+
+    void SearchPrev()
+    {
+        if (search_results.empty()) return;
+        search_idx = (search_idx - 1 + (int)search_results.size()) % (int)search_results.size();
+        y = search_results[search_idx].first;
+        x = search_results[search_idx].second;
+    }
+
+    void ClearSearch()
+    {
+        if (!search_results.empty()) {
+            search_results.clear();
+            search_query.clear();
+            search_idx = -1;
         }
     }
 
@@ -237,7 +305,23 @@ public:
         size_t dot = fname.find_last_of(".");
         std::string ext = "";
         if (dot != std::string::npos && dot < fname.length() - 1) ext = fname.substr(dot + 1);
-        if (ext == "cpp" || ext == "c" || ext == "h" || ext == "hpp") rules = {1, "C++", {"int", "void", "return", "include", "iostream", "std", "cout", "endl", "using", "namespace", "class", "public", "private", "if", "else", "for", "while"}};
+        if (ext == "cpp" || ext == "hpp" || ext == "cc" || ext == "hh") rules = {1, "C++", {"int", "void", "return", "include", "iostream", "std", "cout", "endl", "using", "namespace", "class", "public", "private", "if", "else", "for", "while"}};
+        else if (ext == "c" || ext == "h") rules = {6, "C", {
+            "auto", "break", "case", "char", "const", "continue", "default", "do",
+            "double", "else", "enum", "extern", "float", "for", "goto", "if",
+            "int", "long", "register", "return", "short", "signed", "sizeof",
+            "static", "struct", "switch", "typedef", "union", "unsigned", "void",
+            "volatile", "while",
+            "include", "define", "ifdef", "ifndef", "endif", "undef", "pragma",
+            "printf", "scanf", "malloc", "calloc", "realloc", "free",
+            "fopen", "fclose", "fread", "fwrite", "fprintf", "fscanf",
+            "fgets", "fputs", "sprintf", "snprintf",
+            "strlen", "strcpy", "strncpy", "strcmp", "strncmp", "strcat", "strncat",
+            "strstr", "strchr", "strtok", "memcpy", "memmove", "memset", "memcmp",
+            "atoi", "atol", "atof", "exit", "assert", "qsort", "bsearch",
+            "NULL", "size_t", "FILE", "EOF", "EXIT_SUCCESS", "EXIT_FAILURE",
+            "stdin", "stdout", "stderr", "main", "bool", "true", "false"
+        }};
         else if (ext == "py") rules = {2, "Python", {"def", "class", "import", "from", "return", "if", "elif", "else", "for", "while", "print"}};
         else if (ext == "js" || ext == "mjs") rules = {3, "JavaScript", {"function", "const", "let", "var", "async", "await", "import", "export", "class", "extends", "if", "else", "for", "while", "return", "try", "catch", "throw", "new", "this", "super", "true", "false", "null", "undefined", "break", "continue", "switch", "case", "default"}};
         else if (ext == "rs") rules = {4, "Rust", {"fn", "let", "mut", "const", "struct", "impl", "trait", "pub", "mod", "use", "crate", "self", "super", "if", "else", "for", "while", "loop", "match", "return", "async", "await", "move", "ref", "type", "where", "unsafe", "static", "true", "false", "Some", "None", "Ok", "Err", "break", "continue", "enum", "dyn"}};
@@ -278,32 +362,46 @@ public:
     {
         start_color();
         use_default_colors();
-        init_pair(CP_DEFAULT, COLOR_WHITE, -1);
-        init_pair(CP_KEYWORD, COLOR_MAGENTA, -1);
-        init_pair(CP_STRING, COLOR_YELLOW, -1);
-        init_pair(CP_COMMENT, COLOR_GREEN, -1);
-        init_pair(CP_LINENUM, COLOR_CYAN, -1);
-        init_pair(CP_STATUS, COLOR_BLACK, COLOR_CYAN);
-        init_pair(CP_ORANGE, COLOR_RED, -1);
-        init_pair(CP_CYAN, COLOR_CYAN, -1);
-        init_pair(CP_ERROR, COLOR_WHITE, COLOR_RED);
-        init_pair(CP_SIDEBAR, 12, -1);
-        init_pair(CP_SELECT, COLOR_BLACK, COLOR_CYAN);
-        init_pair(CP_GHOST, 8, -1);
-        init_pair(CP_MATCH, COLOR_WHITE, COLOR_MAGENTA);
+        ApplyTheme(themes[settings.theme]);
     }
 
     void DrawLine(int row, int buf_idx, int max_x, int sidebar_w)
     {
         std::string line = buffer[buf_idx];
         bool has_err = cpp_errors.count(buf_idx);
-        attron(COLOR_PAIR(has_err ? CP_ERROR : CP_LINENUM));
-        mvprintw(row, sidebar_w, "%3d ", buf_idx + 1);
-        attroff(COLOR_PAIR(has_err ? CP_ERROR : CP_LINENUM));
-        int cur_x = sidebar_w + 4;
+        if (settings.line_numbers) {
+            attron(COLOR_PAIR(has_err ? CP_ERROR : CP_LINENUM));
+            mvprintw(row, sidebar_w, "%3d ", buf_idx + 1);
+            attroff(COLOR_PAIR(has_err ? CP_ERROR : CP_LINENUM));
+        }
+        int cur_x = sidebar_w + (settings.line_numbers ? 4 : 0);
         for (int i = 0; i < (int)line.length() && cur_x < max_x; i++) {
+            bool is_search_start = false;
+            int search_hit_idx = -1;
+            if (!search_query.empty()) {
+                for (int si = 0; si < (int)search_results.size(); si++) {
+                    if (search_results[si].first == buf_idx && search_results[si].second == i) {
+                        is_search_start = true;
+                        search_hit_idx = si;
+                        break;
+                    }
+                }
+            }
+            if (is_search_start) {
+                int cp = (search_hit_idx == search_idx) ? CP_MATCH : CP_SEARCH;
+                attron(COLOR_PAIR(cp));
+                for (int j = 0; j < (int)search_query.length() && cur_x < max_x; j++) {
+                    addch(line[i + j]);
+                    cur_x++;
+                }
+                i += (int)search_query.length() - 1;
+                attroff(COLOR_PAIR(cp));
+                continue;
+            }
+
             bool is_match = (match_pos.active && match_pos.y == buf_idx && match_pos.x == i);
             if (is_match) attron(COLOR_PAIR(CP_MATCH));
+            bool is_c_cpp = (rules.lang == 1 || rules.lang == 6);
             if (line[i] == '"' || line[i] == '\'') {
                 attron(COLOR_PAIR(CP_STRING));
                 char q = line[i];
@@ -316,14 +414,59 @@ public:
                     i++;
                 }
                 attroff(COLOR_PAIR(CP_STRING));
+            } else if (is_c_cpp && in_block_comment) {
+                attron(COLOR_PAIR(CP_COMMENT));
+                while(i < (int)line.length() && cur_x < max_x) {
+                    if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
+                        addch(line[i]); cur_x++;
+                        i++;
+                        addch(line[i]); cur_x++;
+                        in_block_comment = false;
+                        break;
+                    }
+                    addch(line[i]); cur_x++;
+                    i++;
+                }
+                attroff(COLOR_PAIR(CP_COMMENT));
+            } else if (is_c_cpp && line[i] == '/' && i+1 < (int)line.length() && line[i+1] == '/') {
+                attron(COLOR_PAIR(CP_COMMENT));
+                while(i < (int)line.length() && cur_x < max_x) {
+                    addch(line[i]); cur_x++; i++;
+                }
+                attroff(COLOR_PAIR(CP_COMMENT));
+            } else if (is_c_cpp && line[i] == '/' && i+1 < (int)line.length() && line[i+1] == '*') {
+                attron(COLOR_PAIR(CP_COMMENT));
+                addch(line[i]); cur_x++;
+                i++;
+                addch(line[i]); cur_x++;
+                i++;
+                bool closed = false;
+                while(i < (int)line.length() && cur_x < max_x) {
+                    addch(line[i]); cur_x++;
+                    if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
+                        i++;
+                        addch(line[i]); cur_x++;
+                        closed = true;
+                        break;
+                    }
+                    i++;
+                }
+                if (!closed) in_block_comment = true;
+                attroff(COLOR_PAIR(CP_COMMENT));
+            } else if (is_c_cpp && line[i] == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t')) {
+                attron(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
+                while(i < (int)line.length() && cur_x < max_x) {
+                    addch(line[i]); cur_x++; i++;
+                }
+                attroff(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
             } else if (isdigit(line[i])) {
                 attron(COLOR_PAIR(CP_ORANGE));
                 addch(line[i]);
                 cur_x++;
                 attroff(COLOR_PAIR(CP_ORANGE));
-            } else if (isalpha(line[i]) || line[i] == '#' || line[i] == '_') {
+            } else if (isalpha(line[i]) || line[i] == '_') {
                 std::string w = "";
-                while(i < (int)line.length() && (isalnum(line[i]) || line[i]=='#' || line[i]=='_')) w += line[i++];
+                while(i < (int)line.length() && (isalnum(line[i]) || line[i]=='_')) w += line[i++];
                 i--;
                 bool is_kw = false;
                 for(auto& k : rules.keywords) if(k == w) is_kw = true;
@@ -389,8 +532,10 @@ public:
         size_t dot = curr_file.find_last_of(".");
         if (dot != std::string::npos) ext = curr_file.substr(dot + 1);
         // Shell-safe quoting for filenames with spaces
-        if (ext == "cpp" || ext == "c" || ext == "hpp" || ext == "cc" || ext == "hh")
+        if (ext == "cpp" || ext == "hpp" || ext == "cc" || ext == "hh")
             cmd = "g++ \"" + curr_file + "\" -o run && ./run";
+        else if (ext == "c")
+            cmd = "gcc \"" + curr_file + "\" -o run && ./run";
         else if (ext == "py") cmd = "python3 \"" + curr_file + "\"";
         else if (ext == "rs") cmd = "rustc \"" + curr_file + "\" -o run && ./run";
         else if (ext == "go") cmd = "go run \"" + curr_file + "\"";
@@ -413,7 +558,7 @@ public:
         getmaxyx(stdscr, my, mx);
         int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
         auto now = std::chrono::steady_clock::now();
-        if (buffer.IsModified() && std::chrono::duration_cast<std::chrono::seconds>(now - last_save_time).count() >= AUTO_SAVE_INTERVAL_SEC && buffer.GetLineCount() > 0) SaveFile();
+        if (settings.auto_save_interval > 0 && buffer.IsModified() && std::chrono::duration_cast<std::chrono::seconds>(now - last_save_time).count() >= settings.auto_save_interval && buffer.GetLineCount() > 0) SaveFile();
         if (show_sidebar) {
             attron(COLOR_PAIR(CP_SIDEBAR));
             for(int i=0; i<my-1; i++) mvaddch(i, sw-1, '|');
@@ -438,7 +583,7 @@ public:
                 std::string ex = sidebar_paths[idx].extension().string();
                 int c = CP_DEFAULT;
                 if(ex==".py") c=CP_CYAN;
-                else if(ex==".cpp"||ex==".h"||ex==".hpp") c=CP_SIDEBAR;
+                else if(ex==".cpp"||ex==".h"||ex==".hpp"||ex==".c") c=CP_SIDEBAR;
                 else if(ex==".html") c=CP_ORANGE;
                 else if(ex==".zip") c=CP_ERROR;
                 else if(ex==".js"||ex==".json") c=CP_STRING;
@@ -449,19 +594,44 @@ public:
             }
             attroff(COLOR_PAIR(CP_SIDEBAR));
         }
+        in_block_comment = false;
         for (int i = 0; i < my - 1; i++) {
             int idx = i + v_scroll;
             if (idx < buffer.GetLineCount()) DrawLine(i, idx, mx, sw);
         }
         attron(COLOR_PAIR(CP_STATUS));
         mvhline(my-1, 0, ' ', mx);
-        if (cpp_errors.count(y)) mvprintw(my-1, 1, "![LINTER] %s", cpp_errors[y].c_str());
-        else {
-            if(std::chrono::duration_cast<std::chrono::seconds>(now-msg_time).count()<STATUS_MSG_TIMEOUT_SEC) mvprintw(my-1, 1, "%s", status_msg.c_str());
-            else mvprintw(my-1, 1, " VIX | %s | L:%d C:%d | ^H Help", buffer.GetFilename().c_str(), y+1, x+1);
+        if (in_search_mode) {
+            // Search bar (VS Code style)
+            mvprintw(my-1, 1, " Find: %s", search_query.c_str());
+            if (!search_results.empty()) {
+                mvprintw(my-1, mx - 16, " %d/%d ", search_idx + 1, (int)search_results.size());
+            } else if (!search_query.empty()) {
+                mvprintw(my-1, mx - 16, " no matches ");
+            }
+        } else if (cpp_errors.count(y)) {
+            mvprintw(my-1, 1, "![LINTER] %s%s", cpp_errors[y].c_str(),
+                buffer.IsModified() ? " [modified]" : "");
+        } else {
+            if(std::chrono::duration_cast<std::chrono::seconds>(now-msg_time).count()<STATUS_MSG_TIMEOUT_SEC) {
+                mvprintw(my-1, 1, "%s", status_msg.c_str());
+            } else {
+                // Show match count if search results are active
+                std::string suffix = "";
+                if (!search_results.empty()) {
+                    suffix = " | [" + std::to_string(search_idx + 1) + "/" + std::to_string((int)search_results.size()) + "]";
+                }
+                mvprintw(my-1, 1, " VIX | %s%s | %s | L:%d C:%d/%d%s | ^H Help",
+                    buffer.GetFilename().c_str(),
+                    buffer.IsModified() ? " *" : "",
+                    rules.name.c_str(),
+                    y+1, x+1, buffer.GetLineCount(), suffix.c_str());
+            }
         }
         attroff(COLOR_PAIR(CP_STATUS));
+        // Cursor positioning
         if (focus_sidebar) move(sidebar_sel - sidebar_scroll + 1, 1);
+        else if (in_search_mode) move(my-1, 8 + (int)search_query.length());
         else move(y-v_scroll, x+sw+4);
         refresh();
     }
@@ -525,20 +695,55 @@ public:
                 continue;
             }
 
+            if (in_search_mode) {
+                if (ch == 27) { // Escape → cancel search
+                    in_search_mode = false;
+                    search_results.clear();
+                    search_query.clear();
+                    search_idx = -1;
+                } else if (ch == '\n' || ch == KEY_ENTER) {
+                    // Enter → confirm search, stay on current match
+                    in_search_mode = false;
+                } else if (ch == KEY_F(3)) {
+                    if (!search_results.empty()) SearchNext();
+                } else if (ch == KEY_F(13) || ch == KEY_BACKSPACE) {
+                    // Shift+F3 → previous; Backspace → delete char
+                    if (ch == KEY_BACKSPACE) {
+                        if (!search_query.empty()) {
+                            search_query.pop_back();
+                            FindAll(search_query);
+                        } else {
+                            in_search_mode = false;
+                            search_results.clear();
+                            search_idx = -1;
+                        }
+                    } else {
+                        if (!search_results.empty()) SearchPrev();
+                    }
+                } else if (ch >= 32 && ch <= 126) {
+                    search_query += (char)ch;
+                    FindAll(search_query);
+                }
+                continue;
+            }
+
             if (ch == CTRL('q')) break;
             if (ch == CTRL('s')) SaveFile();
             if (ch == CTRL('r')) CompileAndRun();
             if (ch == CTRL('w')) focus_sidebar = !focus_sidebar;
             if (ch == CTRL('t')) show_sidebar = !show_sidebar;
+            if (ch == KEY_F(2)) {
+                ShowSettingsPanel(settings);
+            }
             if (ch == CTRL('h')) {
                 WINDOW* hw = newwin(HELP_HEIGHT, HELP_WIDTH, (my-HELP_HEIGHT)/2, (mx-HELP_WIDTH)/2);
                 if (hw) {
                     box(hw, 0, 0);
                     mvwprintw(hw, 0, 2, " HELP ");
-                    mvwprintw(hw, 2, 2, "^S: Save  ^Q: Quit  ^R: Run");
+                    mvwprintw(hw, 2, 2, "^S: Save  ^Q: Quit  ^R: Run  F2: Settings");
                     mvwprintw(hw, 3, 2, "^K: Kill  ^C: Copy  ^V: Paste");
-                    mvwprintw(hw, 4, 2, "^F: Find  ^G: GoTo  ^T: Sidebar");
-                    mvwprintw(hw, 5, 2, "TAB: AI Ghost Accept");
+                    mvwprintw(hw, 4, 2, "^F: Search  F3: Next  S+F3: Prev");
+                    mvwprintw(hw, 5, 2, "^D: Replace  TAB: Ghost  ^T: Sidebar");
                     mvwprintw(hw, 6, 2, "^Z: Undo  ^Y: Redo");
                     mvwprintw(hw, 7, 2, "Sidebar: 'a': New File  'd': Delete");
                     mvwprintw(hw, 8, 2, "^P: System Clipboard Paste");
@@ -583,17 +788,19 @@ public:
                 }
             } else {
                 if (ch == 9) {
+                    ClearSearch();
                     if(!ghost_text.empty()) {
                         auto cmd = std::make_unique<InsertCommand>(&buffer, ghost_text, y, x);
                         history.execute(std::move(cmd));
                         x+=ghost_text.length();
                         ghost_text="";
                     } else {
-                        auto cmd = std::make_unique<InsertCommand>(&buffer, "  ", y, x);
+                        auto cmd = std::make_unique<InsertCommand>(&buffer, std::string(settings.tab_width, ' '), y, x);
                         history.execute(std::move(cmd));
                         x+=2;
                     }
                 } else if (ch == CTRL('k')) {
+                    ClearSearch();
                     if(!buffer.IsEmpty() && y < buffer.GetLineCount()) {
                         clipboard=buffer[y];
                         auto cmd = std::make_unique<DeleteCommand>(&buffer, clipboard, y, 0);
@@ -605,12 +812,14 @@ public:
                     CopyToSystemClipboard(clipboard);
                     Notify("Copied");
                 } else if (ch == CTRL('v')) {
+                    ClearSearch();
                     if(!clipboard.empty()) {
                         auto cmd = std::make_unique<InsertCommand>(&buffer, clipboard, y, x);
                         history.execute(std::move(cmd));
                         x += clipboard.length();
                     }
                 } else if (ch == CTRL('p')) {
+                    ClearSearch();
                     {
                         std::string sys_clip = PasteFromSystemClipboard();
                         if (!sys_clip.empty()) {
@@ -625,24 +834,39 @@ public:
                         }
                     }
                 } else if (ch == CTRL('f')) {
-                    std::string q = Prompt("Find: ");
-                    if (q.empty()) q = last_search;
-                    if (q.empty()) { Notify("No search term"); continue; }
-                    last_search = q;
-                    bool found = false;
-                    int start_y = y, start_x = x + 1;
-                    for (int i = start_y; i < buffer.GetLineCount() && !found; i++) {
-                        size_t pos = (i == start_y) ? buffer[i].find(q, start_x) : buffer[i].find(q);
-                        if (pos != std::string::npos) { y = i; x = (int)pos; found = true; }
-                    }
-                    if (!found) {
-                        for (int i = 0; i < start_y && !found; i++) {
-                            size_t pos = buffer[i].find(q);
-                            if (pos != std::string::npos) { y = i; x = (int)pos; found = true; }
+                    // Enter VS Code-style search mode (live search)
+                    in_search_mode = true;
+                    search_query.clear();
+                    search_results.clear();
+                    search_idx = -1;
+                } else if (ch == KEY_F(3)) {
+                    // F3 → next match (works after search mode is done)
+                    if (!search_results.empty()) SearchNext();
+                } else if (ch == KEY_F(13)) {
+                    // Shift+F3 → previous match
+                    if (!search_results.empty()) SearchPrev();
+                } else if (ch == CTRL('d')) {
+                    ClearSearch();
+                    {
+                        std::string q = Prompt("Find: ");
+                        if (q.empty()) { Notify("Cancelled"); continue; }
+                        std::string r = Prompt("Replace with: ");
+                        int count = 0;
+                        for (int i = 0; i < buffer.GetLineCount(); i++) {
+                            size_t pos = 0;
+                            while ((pos = buffer[i].find(q, pos)) != std::string::npos) {
+                                buffer[i] = buffer[i].substr(0, pos) + r + buffer[i].substr(pos + q.length());
+                                pos += r.length();
+                                count++;
+                            }
+                        }
+                        if (count > 0) {
+                            buffer.SetModified(true);
+                            Notify("Replaced " + std::to_string(count) + " occurrence" + (count != 1 ? "s" : ""));
+                        } else {
+                            Notify("Not found: " + q);
                         }
                     }
-                    if (found) Notify("Found at L:" + std::to_string(y+1));
-                    else Notify("Not found: " + q);
                 } else if (ch == CTRL('g')) {
                     std::string input = Prompt("Go To Line: ");
                     if (input.empty()) { Notify("Cancelled"); continue; }
@@ -660,11 +884,23 @@ public:
                 else if (ch == KEY_LEFT && x>0) x--;
                 else if (ch == KEY_RIGHT && y < buffer.GetLineCount() && x<(int)buffer[y].length()) x++;
                 else if (ch == 127 || ch == KEY_BACKSPACE) {
+                    ClearSearch();
                     if (x > 0 && x <= (int)buffer[y].length()) {
                         char deleted = buffer[y][x-1];
                         auto cmd = std::make_unique<DeleteCommand>(&buffer, std::string(1, deleted), y, x-1);
                         history.execute(std::move(cmd));
                         x--;
+
+                        // Auto-pair deletion: if we just deleted an opener and the
+                        // next char matches, delete the closer too
+                        char next = (x < (int)buffer[y].length()) ? buffer[y][x] : '\0';
+                        if ((deleted == '(' && next == ')') ||
+                            (deleted == '{' && next == '}') ||
+                            (deleted == '[' && next == ']') ||
+                            (deleted == '"' && next == '"')) {
+                            auto cmd2 = std::make_unique<DeleteCommand>(&buffer, std::string(1, next), y, x);
+                            history.execute(std::move(cmd2));
+                        }
                     } else if (y > 0) {
                         // Line-join: not undoable via Command pattern
                         x = (int)buffer[y-1].length();
@@ -674,15 +910,36 @@ public:
                         buffer.SetModified(true);
                     }
                 } else if (ch == '\n') {
+                    ClearSearch();
                     if (y < buffer.GetLineCount()) {
                         std::string rest = (x < (int)buffer[y].length()) ? buffer[y].substr(x) : "";
+
+                        // Auto-indent: copy leading whitespace from the current line
+                        std::string indent = "";
+                        for (int i = 0; i < x && i < (int)buffer[y].length(); i++) {
+                            char c = buffer[y][i];
+                            if (c == ' ' || c == '\t') indent += c;
+                            else break;
+                        }
+
+                        // Extra indent after opening braces, brackets, parens, or colon
+                        std::string trimmed = buffer[y].substr(0, x);
+                        while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t'))
+                            trimmed.pop_back();
+                        if (!trimmed.empty()) {
+                            char last = trimmed.back();
+                            if (last == '{' || last == '(' || last == '[' || last == ':')
+                                indent += std::string(settings.tab_width, ' ');
+                        }
+
                         buffer[y] = (x < (int)buffer[y].length()) ? buffer[y].substr(0, x) : buffer[y];
-                        auto cmd = std::make_unique<NewLineCommand>(&buffer, y + 1, rest);
+                        auto cmd = std::make_unique<NewLineCommand>(&buffer, y + 1, indent + rest);
                         history.execute(std::move(cmd));
                         y++;
-                        x = 0;
+                        x = (int)indent.length();
                     }
                 } else if (ch >= 32 && ch <= 126) {
+                    ClearSearch();
                     if (y < buffer.GetLineCount() && x <= (int)buffer[y].length()) {
                         if (ch == '(') {
                             auto cmd = std::make_unique<InsertCommand>(&buffer, "()", y, x);

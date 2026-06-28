@@ -1,47 +1,79 @@
-# ✿ Vix Ultimate - Keyboard Guide
+# ✿ Vix Ultimate — The Editor That's Lowkey Obsessed With You
 
-Welcome to Vix Ultimate! Here is a guide for the "new guys" to master the editor.
+Hey. You just opened a terminal and something *vibed*.
 
-## 🚀 The Core Shortcuts
-| Keybind | Action | Description |
-| :--- | :--- | :--- |
-| **`Ctrl + S`** | **Save** | Save current file instantly. |
-| **`Ctrl + Q`** | **Quit** | Close the editor. |
-| **`Ctrl + H`** | **Help** | Open the in-editor help menu. |
-| **`Ctrl + R`** | **Run** | Compile and Run (C, C++, Python). |
-| **`Ctrl + F`** | **Find** | Search for text in the file. |
-| **`Ctrl + G`** | **Go To** | Jump to a specific line number. |
-| **`Ctrl + Z`** | **Undo** | Revert last action. |
-| **`Ctrl + Y`** | **Redo** | Restore undone action. |
-
-## 📂 Navigation & Sidebar
-| Keybind | Action | Description |
-| :--- | :--- | :--- |
-| **`Ctrl + T`** | **Sidebar** | Show or Hide the file explorer. |
-| **`Ctrl + W`** | **Focus** | Switch focus between editor and explorer. |
-| **`Arrows`** | **Navigate** | Move cursor or explorer selection. |
-| **`Enter`** | **Open** | Open file or enter folder (when in explorer). |
-
-## 🤖 AI Ghost Engine
-*   **Ghost Suggestion**: As you type, gray text appears showing suggested code.
-*   **`TAB`**: Press Tab to instantly accept and complete the suggestion!
-*   **Auto-Indent**: Pressing Enter automatically aligns your code.
-
-## 🌐 Supported Languages
-| Language | Extensions |
-| :--- | :--- |
-| **C++** | `.cpp`, `.hpp`, `.cc`, `.hh` |
-| **Python** | `.py` |
-| **JavaScript** | `.js`, `.mjs` |
-| **Rust** | `.rs` |
-| **Go** | `.go` |
-
-## 🎨 Sidebar Colors
-*   **Cyan**: Python (`.py`)
-*   **Dark Blue**: C++ (`.cpp`, `.hpp`)
-*   **Orange**: C / HTML (`.c`, `.h`, `.html`)
-*   **Red**: Archives (`.zip`, `.tar`, `.gz`)
-*   **Yellow**: JSON / JavaScript (`.json`, `.js`)
+Vix isn't your grandma's text editor. It's a C++ terminal editor that follows you around with AI ghost suggestions, highlights your brackets like a proud parent, and has a sidebar that actually respects your file structure. It even compiles your code so you don't have to lift a finger (okay maybe one finger. Ctrl+R).
 
 ---
-*Created with ❤️ for the Linux crushing community.*
+
+## Keyboard 
+
+| Keybind | What it does | Why you'd care |
+| :--- | :--- | :--- |
+| **`Ctrl + S`** | Save | Before your PC does the uno reverse card on ya |
+| **`Ctrl + Q`** | Quit | Exit stage left, like a coward or a king, your call |
+| **`Ctrl + H`** | Help | Opens a little window that tells you what all these keys do |
+| **`F2`** | Settings | Opens the settings panel with 4 themes and config options |
+| **`Ctrl + R`** | Run | Compiles & runs (C++, Python, Rust, Go, JS). Magic. |
+| **`Ctrl + F`** | Search | Live search, like VS Code but in your terminal, no the air IS fine up here |
+| **`F3` / `Shift+F3`** | Next / Prev match | Hop between search results like a caffeinated bunny |
+| **`Ctrl + D`** | Replace | Find all, replace all, repent on your own time |
+| **`Ctrl + G`** | Go To Line | Jump to line 69 like a 12-year-old |
+| **`Ctrl + Z`** | Undo | Oopsie daisy |
+| **`Ctrl + Y`** | Redo | Nevermind I meant to do that |
+
+## Sidebar — We Have a File Explorer at Home
+
+| Keybind | Action | Description |
+| :--- | :--- | :--- |
+| **`Ctrl + T`** | Toggle sidebar | Make it appear. Make it disappear. Your browser history could never. |
+| **`Ctrl + W`** | Focus swap | Switch between editor and sidebar like an emotional pendulum |
+| **`Arrows`** | Navigate | Move up, down, left, right. Yes it IS that simple. |
+| **`Enter`** | Open file / folder | Enter the void (or just a folder, whatever) |
+| **`a`** | New file | Spawns a file. Name it something. No pressure. |
+| **`d`** | Delete file | Poof. Gone. Just like my will to comment my code. |
+
+## AI Ghost Engine — The Spookiest Coder Since Skynet
+
+Ever feel like someone's typing *for* you? That's Vix's ghost suggestion engine. Gray text appears in front of you like a phantom, predicting what you want to write based on ~ vibes ~ and Python witchcraft.
+
+- **Ghost text** shows up as grayed-out code predictions
+- **Press `TAB`** to accept the ghost's offering
+- **Press `TAB` again** to insert 2 spaces because we're not animals
+- The ghost runs on Python embedded in C++. We don't know how it works either. It just does. Don't question it.
+
+## Sidebar Colors (The Fashion Part)
+
+| Color | What it means |
+| :--- | :--- |
+| **Cyan** (Python) | Snake language. Hisses softly. |
+| **Dark Blue** (C++) | The OGs. We come from the before-fore times. |
+| **Orange** (C / HTML) | Grandpa C and his weird markup cousin |
+| **Red** (Archives) | `.zip`, `.tar`, `.gz` — ancient artifacts |
+| **Yellow** (JSON / JS) | Yellow because it's always on fire 🔥 |
+
+## Languages Vix Actually Likes
+
+| Language | Extensions |
+| :--- | :--- |
+| **C++** | `.cpp`, `.hpp`, `.cc`, `.hh` — the usual suspects |
+| **Python** | `.py` — yes, even snake_case |
+| **JavaScript** | `.js`, `.mjs` — laughs in callback |
+| **Rust** | `.rs` — the borrow checker is watching |
+| **Go** | `.go` — simple like me |
+
+## 🛠 How to Build 
+
+You don't need npm, cargo, or a PhD. Just:
+
+```bash
+bash build.sh
+```
+
+What it does:
+1. Compiles `vix` (the editor) 
+2. Installs them to `~/.local/bin/` so you can run `vix` from anywhere
+3. Tucks you in at night (not really, but it would if it could)
+
+Requirements: Python 3.14, ncurses, and a can-do attitude (or coffee, whatever).
+
