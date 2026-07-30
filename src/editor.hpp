@@ -1,0 +1,92 @@
+#pragma once
+#include <vector>
+#include <string>
+#include <memory>
+#include <chrono>
+#include <filesystem>
+#include <ncurses.h>
+#include "core/buffer.hpp"
+#include "history/history.hpp"
+#include "ui/settings.hpp"
+
+namespace fs = std::filesystem;
+
+#define CP_DEFAULT 1
+#define CP_KEYWORD 2
+#define CP_STRING  3
+#define CP_COMMENT 4
+#define CP_LINENUM 5
+#define CP_STATUS  6
+#define CP_ORANGE  7
+#define CP_CYAN    8
+#define CP_ERROR   9
+#define CP_SIDEBAR 10
+#define CP_SELECT  11
+#define CP_MATCH   12
+#define CP_SEARCH  13
+
+struct SyntaxRules {
+    int lang;
+    std::string name;
+    std::vector<std::string> keywords;
+};
+
+struct Tab {
+    Buffer buffer;
+    History history;
+    int x, y;
+    int v_scroll;
+    SyntaxRules rules;
+    std::string clipboard;
+    bool in_block_comment;
+    Tab() : x(0), y(0), v_scroll(0), in_block_comment(false) {}
+};
+
+class Editor {
+public:
+    Editor(int argc, char** argv);
+    ~Editor();
+    void run();
+
+private:
+    void detect_language(Tab& tab);
+    void load_file(Tab& tab, const std::string& fname);
+    void save_file(Tab& tab);
+    void draw();
+    void draw_tab_bar(int mx);
+    void draw_sidebar(int my, int mx);
+    void draw_line(int row, int buf_idx, int max_x, int sidebar_w, Tab& tab);
+    void draw_status(int my, int mx);
+    std::string prompt(const std::string& msg);
+    void compile_run(Tab& tab);
+    void update_sidebar();
+    void find_match(Tab& tab);
+    void find_all(Tab& tab, const std::string& q);
+    void search_next(Tab& tab);
+    void search_prev(Tab& tab);
+    void clear_search(Tab& tab);
+    void new_tab(const std::string& fname = "");
+    void close_tab(int idx);
+    void switch_tab(int idx);
+    void fuzzy_finder();
+
+    int current_tab;
+    std::vector<std::unique_ptr<Tab>> tabs;
+
+    bool running, show_sidebar, focus_sidebar, in_search_mode, search_regex;
+    std::string current_dir, search_query, status_msg;
+    std::vector<fs::path> sidebar_paths;
+    int sidebar_sel, sidebar_scroll;
+    std::vector<std::pair<int,int>> search_results;
+    int search_idx;
+
+    struct { int x, y; bool active; } match_pos;
+
+    Settings settings;
+    std::chrono::steady_clock::time_point msg_time, last_save_time;
+
+    static constexpr int SIDEBAR_WIDTH = 22;
+    static constexpr int PROMPT_SIZE = 256;
+    static constexpr int STATUS_TIMEOUT = 3;
+    static constexpr size_t HISTORY_MAX = 50;
+};

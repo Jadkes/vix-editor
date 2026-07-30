@@ -6,21 +6,19 @@
 #include <fstream>
 #include <stdexcept>
 
-class Buffer
-{
+class Buffer {
 public:
     Buffer();
     explicit Buffer(const std::string& filename);
 
     void LoadFile(const std::string& fname);
-    void SaveFile();
+    bool SaveFile();
     void Clear();
 
     void Insert(int line, int col, const std::string& text);
     void Delete(int line, int col, int count);
 
     std::string GetLine(int n) const;
-    // Throws std::out_of_range if n < 0 or n >= line count
     std::string& operator[](int n);
     const std::vector<std::string>& GetAllLines() const;
     int GetLineCount() const;

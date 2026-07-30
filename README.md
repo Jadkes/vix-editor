@@ -62,18 +62,31 @@ Ever feel like someone's typing *for* you? That's Vix's ghost suggestion engine.
 | **Rust** | `.rs` — the borrow checker is watching |
 | **Go** | `.go` — simple like me |
 
-## 🛠 How to Build 
+## 🛠 How to Build
 
-You don't need npm, cargo, or a PhD. Just:
+Requirements: Python 3.14, ncurses, Ninja, and a can-do attitude (or coffee, whatever).
 
+### Quick build
 ```bash
-bash build.sh
+cmake --preset default
+cmake --build --preset default
 ```
 
-What it does:
-1. Compiles `vix` (the editor) 
-2. Installs them to `~/.local/bin/` so you can run `vix` from anywhere
-3. Tucks you in at night (not really, but it would if it could)
+### Manual build
+```bash
+cmake -B build -G Ninja
+cmake --build build -j$(nproc)
+```
 
-Requirements: Python 3.14, ncurses, and a can-do attitude (or coffee, whatever).
+### Install
+```bash
+cmake --install build --prefix ~/.local
+```
+Then run `vix` from anywhere.
+
+### Debug build
+```bash
+cmake --preset debug
+cmake --build --preset debug
+```
 
