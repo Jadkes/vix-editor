@@ -24,6 +24,25 @@ static bool is_prefix(const std::string& s, const std::string& of) {
     return true;
 }
 
+static bool iequal(char a, char b) {
+    return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
+}
+
+static bool is_word_char(char c) {
+    return std::isalnum((unsigned char)c) || c == '_';
+}
+
+static size_t ifind(const std::string& hay, const std::string& needle, size_t pos) {
+    for (size_t i = pos; i + needle.length() <= hay.length(); i++) {
+        bool match = true;
+        for (size_t j = 0; j < needle.length(); j++) {
+            if (!iequal(hay[i + j], needle[j])) { match = false; break; }
+        }
+        if (match) return i;
+    }
+    return std::string::npos;
+}
+
 Editor::Editor(int argc, char** argv)
     : current_tab(0), running(true),
       show_sidebar(true), focus_sidebar(false),
@@ -250,56 +269,71 @@ void Editor::fuzzy_finder() {
     refresh();
 }
 
+std::regex Editor::build_regex(const std::string& q) const {
+    std::string p = q;
+    auto flags = std::regex::ECMAScript | std::regex::optimize;
+    if (!search_case_sensitive) flags |= std::regex::icase;
+    if (search_whole_word) p = "\\b(?:" + p + ")\\b";
+    return std::regex(p, flags);
+}
+
+void Editor::plain_search(const std::string& line, int line_idx, const std::string& q) {
+    size_t pos = 0;
+    while (true) {
+        size_t found = search_case_sensitive ? line.find(q, pos) : ifind(line, q, pos);
+        if (found == std::string::npos) break;
+        if (search_whole_word) {
+            bool left = (found == 0) || !is_word_char(line[found - 1]);
+            bool right = (found + q.length() >= line.length()) || !is_word_char(line[found + q.length()]);
+            if (!(left && right)) { pos = found + 1; continue; }
+        }
+        search_results.push_back({line_idx, (int)found, (int)q.length()});
+        pos = found + 1;
+    }
+}
+
 void Editor::find_all(Tab& tab, const std::string& q) {
     search_results.clear();
     search_query = q;
     search_idx = -1;
     if (q.empty()) return;
-    try {
-        std::regex re(q, std::regex::ECMAScript | (search_regex ? std::regex::optimize : std::regex::grep));
-        for (int i = 0; i < tab.buffer.GetLineCount(); i++) {
-            if (search_regex) {
+    if (search_regex) {
+        try {
+            std::regex re = build_regex(q);
+            for (int i = 0; i < tab.buffer.GetLineCount(); i++) {
                 auto words_begin = std::sregex_iterator(tab.buffer[i].begin(), tab.buffer[i].end(), re);
                 auto words_end = std::sregex_iterator();
                 for (auto it = words_begin; it != words_end; ++it)
-                    search_results.emplace_back(i, (int)it->position());
-            } else {
-                size_t pos = 0;
-                while ((pos = tab.buffer[i].find(q, pos)) != std::string::npos) {
-                    search_results.emplace_back(i, (int)pos);
-                    pos++;
-                }
+                    search_results.push_back({i, (int)it->position(), (int)it->length()});
             }
+        } catch (const std::regex_error&) {
+            for (int i = 0; i < tab.buffer.GetLineCount(); i++)
+                plain_search(tab.buffer[i], i, q);
         }
-    } catch (const std::regex_error&) {
-        for (int i = 0; i < tab.buffer.GetLineCount(); i++) {
-            size_t pos = 0;
-            while ((pos = tab.buffer[i].find(q, pos)) != std::string::npos) {
-                search_results.emplace_back(i, (int)pos);
-                pos++;
-            }
-        }
+    } else {
+        for (int i = 0; i < tab.buffer.GetLineCount(); i++)
+            plain_search(tab.buffer[i], i, q);
     }
     if (!search_results.empty()) {
         search_idx = 0;
         auto& t = *tabs[current_tab];
-        t.y = search_results[0].first;
-        t.x = search_results[0].second;
+        t.y = search_results[0].line;
+        t.x = search_results[0].col;
     }
 }
 
 void Editor::search_next(Tab& tab) {
     if (search_results.empty()) return;
     search_idx = (search_idx + 1) % (int)search_results.size();
-    tab.y = search_results[search_idx].first;
-    tab.x = search_results[search_idx].second;
+    tab.y = search_results[search_idx].line;
+    tab.x = search_results[search_idx].col;
 }
 
 void Editor::search_prev(Tab& tab) {
     if (search_results.empty()) return;
     search_idx = (search_idx - 1 + (int)search_results.size()) % (int)search_results.size();
-    tab.y = search_results[search_idx].first;
-    tab.x = search_results[search_idx].second;
+    tab.y = search_results[search_idx].line;
+    tab.x = search_results[search_idx].col;
 }
 
 void Editor::clear_search(Tab&) {
@@ -479,14 +513,16 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
         attroff(COLOR_PAIR(CP_LINENUM));
     }
     int cur_x = sw + (settings.line_numbers ? 4 : 0);
-    int i = 0;
+    int i = tab.h_scroll;
     while (i < (int)line.length() && cur_x < max_x) {
         bool is_search_start = false;
+        int search_hit_len = 0;
         int search_hit_idx = -1;
         if (!search_query.empty()) {
             for (int si = 0; si < (int)search_results.size(); si++) {
-                if (search_results[si].first == buf_idx && search_results[si].second == i) {
+                if (search_results[si].line == buf_idx && search_results[si].col == i) {
                     is_search_start = true;
+                    search_hit_len = search_results[si].len;
                     search_hit_idx = si;
                     break;
                 }
@@ -495,10 +531,10 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
         if (is_search_start) {
             int cp = (search_hit_idx == search_idx) ? CP_MATCH : CP_SEARCH;
             attron(COLOR_PAIR(cp));
-            for (int j = 0; j < (int)search_query.length() && cur_x < max_x; j++) {
+            for (int j = 0; j < search_hit_len && cur_x < max_x; j++) {
                 addch(line[i + j]); cur_x++;
             }
-            i += (int)search_query.length() - 1;
+            i += search_hit_len - 1;
             attroff(COLOR_PAIR(cp));
             i++; continue;
         }
@@ -582,7 +618,11 @@ void Editor::draw_status(int my, int mx) {
     attron(COLOR_PAIR(CP_STATUS));
     mvhline(my - 1, 0, ' ', mx);
     if (in_search_mode) {
-        mvprintw(my - 1, 1, " %sFind: %s", search_regex ? "RE " : "", search_query.c_str());
+        std::string flags;
+        if (search_regex) flags += "RE ";
+        if (!search_case_sensitive) flags += "IC ";
+        if (search_whole_word) flags += "WW ";
+        mvprintw(my - 1, 1, " %sFind: %s", flags.c_str(), search_query.c_str());
         if (!search_results.empty())
             mvprintw(my - 1, mx - 12, " %d/%d ", search_idx + 1, (int)search_results.size());
         else if (!search_query.empty())
@@ -628,11 +668,15 @@ void Editor::draw() {
         int sy = std::clamp(sidebar_sel - sidebar_scroll + 2, 1, my - 2);
         move(sy, 1);
     } else if (in_search_mode) {
-        int sx = std::clamp(9 + (int)search_query.length() + (search_regex ? 3 : 0), 0, mx - 1);
+        int flag_len = 0;
+        if (search_regex) flag_len += 3;
+        if (!search_case_sensitive) flag_len += 3;
+        if (search_whole_word) flag_len += 3;
+        int sx = std::clamp(7 + flag_len + (int)search_query.length(), 0, mx - 1);
         move(my - 1, sx);
     } else {
         int cy = std::clamp(tab.y - tab.v_scroll + 1, 1, my - 2);
-        int cx = std::clamp(tab.x + sw + 4, 0, mx - 1);
+        int cx = std::clamp(tab.x - tab.h_scroll + sw + (settings.line_numbers ? 4 : 0), 0, mx - 1);
         move(cy, cx);
     }
     refresh();
@@ -666,6 +710,13 @@ void Editor::run() {
 
         if (tab.y < tab.v_scroll) tab.v_scroll = tab.y;
         if (tab.y >= tab.v_scroll + my - 2) tab.v_scroll = tab.y - (my - 2) + 1;
+
+        int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
+        int text_w = mx - sw - (settings.line_numbers ? 4 : 0);
+        if (text_w < 1) text_w = 1;
+        if (tab.h_scroll < 0) tab.h_scroll = 0;
+        if (tab.x < tab.h_scroll) tab.h_scroll = tab.x;
+        if (tab.x >= tab.h_scroll + text_w) tab.h_scroll = tab.x - text_w + 1;
 
         draw();
         int ch = getch();
@@ -710,7 +761,7 @@ void Editor::run() {
                         focus_sidebar = false;
                         int clicked_y = event.y - 1 + tab.v_scroll;
                         int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
-                        int clicked_x = event.x - sw - 4;
+                        int clicked_x = event.x - sw - (settings.line_numbers ? 4 : 0) + tab.h_scroll;
                         if (clicked_y >= 0 && clicked_y < tab.buffer.GetLineCount()) {
                             tab.y = clicked_y;
                             tab.x = std::max(0, std::min((int)tab.buffer[tab.y].length(), clicked_x));
@@ -740,6 +791,12 @@ void Editor::run() {
             } else if (ch == CTRL('r')) {
                 search_regex = !search_regex;
                 if (!search_query.empty()) find_all(tab, search_query);
+            } else if (ch == CTRL('c')) {
+                search_case_sensitive = !search_case_sensitive;
+                if (!search_query.empty()) find_all(tab, search_query);
+            } else if (ch == CTRL('w')) {
+                search_whole_word = !search_whole_word;
+                if (!search_query.empty()) find_all(tab, search_query);
             } else if (ch >= 32 && ch <= 126) {
                 search_query += (char)ch;
                 find_all(tab, search_query);
@@ -748,18 +805,6 @@ void Editor::run() {
         }
 
         if (ch == 27) {
-            nodelay(stdscr, TRUE);
-            int next = getch();
-            nodelay(stdscr, FALSE);
-            if (next != ERR && next == '[') {
-                nodelay(stdscr, TRUE);
-                int third = getch();
-                nodelay(stdscr, FALSE);
-                if (third == 'I') {
-                    int nt = (current_tab + 1) % (int)tabs.size();
-                    switch_tab(nt);
-                }
-            }
             continue;
         }
 
@@ -858,12 +903,12 @@ void Editor::run() {
                 mvwprintw(hw, 0, 2, " VIX HELP ");
                 mvwprintw(hw, 2, 2, "^S: Save   ^Q: Quit   ^R: Run   F2: Settings");
                 mvwprintw(hw, 3, 2, "^K: Kill   ^C: Copy   ^V: Paste   ^P: Find");
-                mvwprintw(hw, 4, 2, "^F: Search F3: Next  S+F3: Prev  ^R: Regex");
-                mvwprintw(hw, 5, 2, "^D: Replace  ^G: Go To Line");
-                mvwprintw(hw, 6, 2, "^Z: Undo  ^Y: Redo  ^N: New Tab");
-                mvwprintw(hw, 7, 2, "^Tab: Next  S+Tab: Prev  ^\\: Close  F5: Alt+Tab");
-                mvwprintw(hw, 8, 2, "Sidebar: 'a': New File  'd': Delete  ^W: Focus");
-                mvwprintw(hw, 9, 2, "Mouse click on tab bar to switch tabs");
+                mvwprintw(hw, 4, 2, "^F: Search F3: Next  S+F3: Prev");
+                mvwprintw(hw, 5, 2, "Search: ^R Regex  ^C Case  ^W Word");
+                mvwprintw(hw, 6, 2, "^D: Replace  ^G: Go To Line");
+                mvwprintw(hw, 7, 2, "^Z: Undo  ^Y: Redo  ^N: New Tab");
+                mvwprintw(hw, 8, 2, "Tab: F5 Next  S+Tab Prev  ^\\ Close");
+                mvwprintw(hw, 9, 2, "Sidebar: 'a' New  'd' Delete  ^W Focus");
                 wrefresh(hw);
                 wgetch(hw);
                 delwin(hw);

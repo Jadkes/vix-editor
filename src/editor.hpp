@@ -4,6 +4,7 @@
 #include <memory>
 #include <chrono>
 #include <filesystem>
+#include <regex>
 #include <ncurses.h>
 #include "core/buffer.hpp"
 #include "history/history.hpp"
@@ -36,10 +37,17 @@ struct Tab {
     History history;
     int x, y;
     int v_scroll;
+    int h_scroll;
     SyntaxRules rules;
     std::string clipboard;
     bool in_block_comment;
-    Tab() : x(0), y(0), v_scroll(0), in_block_comment(false) {}
+    Tab() : x(0), y(0), v_scroll(0), h_scroll(0), in_block_comment(false) {}
+};
+
+struct SearchHit {
+    int line;
+    int col;
+    int len;
 };
 
 class Editor {
@@ -62,6 +70,8 @@ private:
     void update_sidebar();
     void find_match(Tab& tab);
     void find_all(Tab& tab, const std::string& q);
+    std::regex build_regex(const std::string& q) const;
+    void plain_search(const std::string& line, int line_idx, const std::string& q);
     void search_next(Tab& tab);
     void search_prev(Tab& tab);
     void clear_search(Tab& tab);
@@ -74,10 +84,11 @@ private:
     std::vector<std::unique_ptr<Tab>> tabs;
 
     bool running, show_sidebar, focus_sidebar, in_search_mode, search_regex;
+    bool search_case_sensitive = true, search_whole_word = false;
     std::string current_dir, search_query, status_msg;
     std::vector<fs::path> sidebar_paths;
     int sidebar_sel, sidebar_scroll;
-    std::vector<std::pair<int,int>> search_results;
+    std::vector<SearchHit> search_results;
     int search_idx;
 
     struct { int x, y; bool active; } match_pos;
