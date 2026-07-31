@@ -61,7 +61,7 @@ private:
 
 class NewLineCommand : public Command {
 public:
-    NewLineCommand(Buffer* buf, int insert_before_line, const std::string& second_half);
+    NewLineCommand(Buffer* buf, int insert_before_line, const std::string& second_half, const std::string& orig_first_half);
     bool execute() override;
     bool undo() override;
     std::string description() const override;
@@ -69,6 +69,7 @@ private:
     Buffer* buffer;
     int insert_before_line;
     std::string second_half;
+    std::string orig_first_half;
 };
 
 #endif

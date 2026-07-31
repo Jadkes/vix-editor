@@ -38,6 +38,7 @@ private:
     std::vector<std::string> lines;
     std::string filename;
     bool modified;
+    bool ends_with_newline;
 };
 
 struct Cursor {

@@ -59,8 +59,8 @@ bool DeleteCommand::execute() { if (!buffer) return false; buffer->Delete(line, 
 bool DeleteCommand::undo() { if (!buffer) return false; buffer->Insert(line, col, text); return true; }
 std::string DeleteCommand::description() const { return "Delete: " + text; }
 
-NewLineCommand::NewLineCommand(Buffer* buf, int insert_before_line, const std::string& second_half)
-    : buffer(buf), insert_before_line(insert_before_line), second_half(second_half) {}
+NewLineCommand::NewLineCommand(Buffer* buf, int insert_before_line, const std::string& second_half, const std::string& orig_first_half)
+    : buffer(buf), insert_before_line(insert_before_line), second_half(second_half), orig_first_half(orig_first_half) {}
 
 bool NewLineCommand::execute() {
     if (!buffer) return false;
@@ -71,9 +71,10 @@ bool NewLineCommand::execute() {
 bool NewLineCommand::undo() {
     if (!buffer) return false;
     if (insert_before_line >= buffer->GetLineCount()) return false;
-    std::string remaining = (*buffer)[insert_before_line];
     buffer->EraseLine(insert_before_line);
-    if (insert_before_line > 0) (*buffer)[insert_before_line - 1] += remaining;
+    if (insert_before_line > 0) {
+        (*buffer)[insert_before_line - 1] = orig_first_half;
+    }
     return true;
 }
 

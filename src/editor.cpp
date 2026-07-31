@@ -84,10 +84,18 @@ void Editor::new_tab(const std::string& fname) {
 
 void Editor::close_tab(int idx) {
     if (tabs.size() <= 1) {
+        if ((*tabs[current_tab]).buffer.IsModified()) {
+            std::string a = prompt("Unsaved changes. Save? (y/n): ");
+            if (a == "y" || a == "Y") save_file(*tabs[current_tab]);
+        }
         running = false;
         return;
     }
     if (idx < 0 || idx >= (int)tabs.size()) return;
+    if ((*tabs[idx]).buffer.IsModified()) {
+        std::string a = prompt("Unsaved changes. Save? (y/n): ");
+        if (a == "y" || a == "Y") save_file(*tabs[idx]);
+    }
     tabs.erase(tabs.begin() + idx);
     if (current_tab >= (int)tabs.size()) current_tab = (int)tabs.size() - 1;
 }
@@ -316,9 +324,8 @@ void Editor::find_all(Tab& tab, const std::string& q) {
     }
     if (!search_results.empty()) {
         search_idx = 0;
-        auto& t = *tabs[current_tab];
-        t.y = search_results[0].line;
-        t.x = search_results[0].col;
+        tab.y = search_results[0].line;
+        tab.x = search_results[0].col;
     }
 }
 
@@ -375,11 +382,6 @@ void Editor::compile_run(Tab& tab) {
     endwin();
     system("reset -e && clear");
     std::string cf = tab.buffer.GetFilename();
-    sigset_t old_mask, new_mask;
-    sigemptyset(&new_mask);
-    sigaddset(&new_mask, SIGINT);
-    sigaddset(&new_mask, SIGQUIT);
-    sigprocmask(SIG_BLOCK, &new_mask, &old_mask);
     std::string cmd;
     size_t dot = cf.find_last_of(".");
     std::string ext = (dot != std::string::npos) ? cf.substr(dot + 1) : "";
@@ -394,7 +396,6 @@ void Editor::compile_run(Tab& tab) {
         std::cout << "\033[1;33m>> RUN: " << cmd << "\033[0m\n";
         system(cmd.c_str());
     }
-    sigprocmask(SIG_SETMASK, &old_mask, nullptr);
     std::cout << "\nPress Enter...";
     std::cin.ignore();
     std::cin.get();
@@ -520,7 +521,8 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
         int search_hit_idx = -1;
         if (!search_query.empty()) {
             for (int si = 0; si < (int)search_results.size(); si++) {
-                if (search_results[si].line == buf_idx && search_results[si].col == i) {
+                if (search_results[si].line == buf_idx && search_results[si].col == i &&
+                    search_results[si].col + search_results[si].len <= (int)line.length()) {
                     is_search_start = true;
                     search_hit_len = search_results[si].len;
                     search_hit_idx = si;
@@ -634,12 +636,12 @@ void Editor::draw_status(int my, int mx) {
             std::string suf;
             if (!search_results.empty())
                 suf = " | [" + std::to_string(search_idx + 1) + "/" + std::to_string((int)search_results.size()) + "]";
-            mvprintw(my - 1, 1, " %s%s | %s | Tab %d/%zu | L:%d C:%d/%d%s | ^H Help",
+            mvprintw(my - 1, 1, " %s%s | %s | Tab %d/%zu | L:%d/%d C:%d%s | ^H Help",
                 tab.buffer.GetFilename().c_str(),
                 tab.buffer.IsModified() ? " *" : "",
                 tab.rules.name.c_str(),
                 current_tab + 1, tabs.size(),
-                tab.y + 1, tab.x + 1, tab.buffer.GetLineCount(), suf.c_str());
+                tab.y + 1, tab.buffer.GetLineCount(), tab.x + 1, suf.c_str());
         }
     }
     attroff(COLOR_PAIR(CP_STATUS));
@@ -808,7 +810,13 @@ void Editor::run() {
             continue;
         }
 
-        if (ch == CTRL('q')) running = false;
+        if (ch == CTRL('q')) {
+            if (tab.buffer.IsModified()) {
+                std::string a = prompt("Unsaved changes. Save? (y/n): ");
+                if (a == "y" || a == "Y") save_file(tab);
+            }
+            running = false;
+        }
         else if (ch == CTRL('s')) save_file(tab);
         else if (ch == CTRL('r')) compile_run(tab);
         else if (ch == CTRL('w')) focus_sidebar = !focus_sidebar;
@@ -914,7 +922,7 @@ void Editor::run() {
                 delwin(hw);
             }
         }
-        else         if (ch == CTRL('z')) {
+        else if (ch == CTRL('z')) {
             if (tab.history.undo()) {
                 status_msg = "[Undo]";
                 tab.y = std::clamp(tab.y, 0, std::max(0, tab.buffer.GetLineCount() - 1));
@@ -1009,9 +1017,10 @@ void Editor::run() {
                         if (last == '{' || last == '(' || last == '[' || last == ':')
                             indent += std::string(settings.tab_width, ' ');
                     }
+                    std::string orig = tab.buffer[tab.y];
                     tab.buffer[tab.y] = (tab.x < (int)tab.buffer[tab.y].length()) ?
                         tab.buffer[tab.y].substr(0, tab.x) : tab.buffer[tab.y];
-                    auto cmd = std::make_unique<NewLineCommand>(&tab.buffer, tab.y + 1, indent + rest);
+                    auto cmd = std::make_unique<NewLineCommand>(&tab.buffer, tab.y + 1, indent + rest, orig);
                     tab.history.execute(std::move(cmd));
                     tab.y++;
                     tab.x = (int)indent.length();

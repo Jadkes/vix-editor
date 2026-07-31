@@ -1,17 +1,27 @@
 #include "buffer.hpp"
 
-Buffer::Buffer() : filename(""), modified(false) { lines.push_back(""); }
+Buffer::Buffer() : filename(""), modified(false), ends_with_newline(false) { lines.push_back(""); }
 
-Buffer::Buffer(const std::string& fname) : filename(fname), modified(false) { LoadFile(fname); }
+Buffer::Buffer(const std::string& fname) : filename(fname), modified(false), ends_with_newline(false) { LoadFile(fname); }
 
 void Buffer::LoadFile(const std::string& fname) {
-    std::ifstream f(fname);
+    std::ifstream f(fname, std::ios::binary);
     if (!f.is_open()) { lines.clear(); lines.push_back(""); filename = fname; return; }
     lines.clear(); filename = fname;
+    f.seekg(0, std::ios::end);
+    ends_with_newline = (f.tellg() > 0);
+    if (ends_with_newline) {
+        f.seekg(-1, std::ios::end);
+        ends_with_newline = (f.get() == '\n');
+    }
+    f.seekg(0, std::ios::beg);
     std::string l;
-    while (std::getline(f, l)) lines.push_back(l);
-    f.close();
+    while (std::getline(f, l)) {
+        if (!l.empty() && l.back() == '\r') l.pop_back();
+        lines.push_back(l);
+    }
     if (lines.empty()) lines.push_back("");
+    f.close();
     modified = false;
 }
 
@@ -19,7 +29,12 @@ bool Buffer::SaveFile() {
     if (filename.empty()) return false;
     std::ofstream f(filename);
     if (!f.is_open()) return false;
-    for (auto& l : lines) f << l << "\n";
+    for (size_t i = 0; i < lines.size(); i++) {
+        if (i + 1 < lines.size() || ends_with_newline)
+            f << lines[i] << "\n";
+        else
+            f << lines[i];
+    }
     f.close();
     modified = false;
     return !f.fail();
