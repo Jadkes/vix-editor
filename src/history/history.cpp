@@ -1,7 +1,6 @@
 #include "history.hpp"
 #include "../core/buffer.hpp"
 #include <algorithm>
-#include <cassert>
 
 History::History(size_t max_levels) : max_levels(max_levels) {}
 
@@ -34,12 +33,6 @@ bool History::redo() {
     return true;
 }
 
-bool History::canUndo() const { return !undo_stack.empty(); }
-bool History::canRedo() const { return !redo_stack.empty(); }
-void History::clear() { undo_stack.clear(); redo_stack.clear(); }
-size_t History::undoSize() const { return undo_stack.size(); }
-size_t History::redoSize() const { return redo_stack.size(); }
-
 void History::trimStack(std::vector<CommandPtr>& stack) {
     if (stack.size() > max_levels)
         stack.erase(stack.begin(), stack.end() - max_levels);
@@ -48,22 +41,47 @@ void History::trimStack(std::vector<CommandPtr>& stack) {
 InsertCommand::InsertCommand(Buffer* buf, const std::string& text, int line, int col)
     : buffer(buf), text(text), line(line), col(col) {}
 
-bool InsertCommand::execute() { if (!buffer) return false; buffer->Insert(line, col, text); return true; }
-bool InsertCommand::undo() { if (!buffer) return false; buffer->Delete(line, col, (int)text.length()); return true; }
+bool InsertCommand::execute() {
+    if (!buffer) return false;
+    buffer->Insert(line, col, text);
+    return true;
+}
+
+bool InsertCommand::undo() {
+    if (!buffer) return false;
+    buffer->Delete(line, col, (int)text.length());
+    return true;
+}
+
 std::string InsertCommand::description() const { return "Insert: " + text; }
 
 DeleteCommand::DeleteCommand(Buffer* buf, const std::string& text, int line, int col)
     : buffer(buf), text(text), line(line), col(col) {}
 
-bool DeleteCommand::execute() { if (!buffer) return false; buffer->Delete(line, col, (int)text.length()); return true; }
-bool DeleteCommand::undo() { if (!buffer) return false; buffer->Insert(line, col, text); return true; }
+bool DeleteCommand::execute() {
+    if (!buffer) return false;
+    buffer->Delete(line, col, (int)text.length());
+    return true;
+}
+
+bool DeleteCommand::undo() {
+    if (!buffer) return false;
+    buffer->Insert(line, col, text);
+    return true;
+}
+
 std::string DeleteCommand::description() const { return "Delete: " + text; }
 
-NewLineCommand::NewLineCommand(Buffer* buf, int insert_before_line, const std::string& second_half, const std::string& orig_first_half)
-    : buffer(buf), insert_before_line(insert_before_line), second_half(second_half), orig_first_half(orig_first_half) {}
+NewLineCommand::NewLineCommand(Buffer* buf, int insert_before_line,
+                               const std::string& first_half, const std::string& second_half,
+                               const std::string& orig_full_line)
+    : buffer(buf), insert_before_line(insert_before_line),
+      first_half(first_half), second_half(second_half), orig_full_line(orig_full_line) {}
 
 bool NewLineCommand::execute() {
     if (!buffer) return false;
+    if (insert_before_line < 1 || insert_before_line > buffer->GetLineCount()) return false;
+    (*buffer)[insert_before_line - 1] = first_half;
     buffer->InsertLine(insert_before_line, second_half);
     return true;
 }
@@ -72,9 +90,8 @@ bool NewLineCommand::undo() {
     if (!buffer) return false;
     if (insert_before_line >= buffer->GetLineCount()) return false;
     buffer->EraseLine(insert_before_line);
-    if (insert_before_line > 0) {
-        (*buffer)[insert_before_line - 1] = orig_first_half;
-    }
+    if (insert_before_line > 0 && insert_before_line - 1 < buffer->GetLineCount())
+        (*buffer)[insert_before_line - 1] = orig_full_line;
     return true;
 }
 

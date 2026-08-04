@@ -3,10 +3,15 @@ vix
 vix_agent
 vix_editor
 a.out
+run
 
 # Build directories
 build/
+build-debug/
 tests/build/
+
+# Clangd language-server index cache
+.cache/
 
 # Test results
 tests/Testing/

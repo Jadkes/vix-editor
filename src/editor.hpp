@@ -59,7 +59,7 @@ public:
 private:
     void detect_language(Tab& tab);
     void load_file(Tab& tab, const std::string& fname);
-    void save_file(Tab& tab);
+    bool save_file(Tab& tab);
     void draw();
     void draw_tab_bar(int mx);
     void draw_sidebar(int my, int mx);
@@ -80,6 +80,10 @@ private:
     void switch_tab(int idx);
     void fuzzy_finder();
 
+    void set_status(const std::string& msg);
+    void clamp_cursor(Tab& tab);
+    static bool is_untitled(const Buffer& buffer);
+
     int current_tab;
     std::vector<std::unique_ptr<Tab>> tabs;
 
@@ -99,5 +103,4 @@ private:
     static constexpr int SIDEBAR_WIDTH = 22;
     static constexpr int PROMPT_SIZE = 256;
     static constexpr int STATUS_TIMEOUT = 3;
-    static constexpr size_t HISTORY_MAX = 50;
 };

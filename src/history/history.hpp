@@ -21,11 +21,6 @@ public:
     bool execute(CommandPtr cmd);
     bool undo();
     bool redo();
-    bool canUndo() const;
-    bool canRedo() const;
-    void clear();
-    size_t undoSize() const;
-    size_t redoSize() const;
 private:
     void trimStack(std::vector<CommandPtr>& stack);
     std::vector<CommandPtr> undo_stack;
@@ -61,15 +56,18 @@ private:
 
 class NewLineCommand : public Command {
 public:
-    NewLineCommand(Buffer* buf, int insert_before_line, const std::string& second_half, const std::string& orig_first_half);
+    NewLineCommand(Buffer* buf, int insert_before_line,
+                   const std::string& first_half, const std::string& second_half,
+                   const std::string& orig_full_line);
     bool execute() override;
     bool undo() override;
     std::string description() const override;
 private:
     Buffer* buffer;
     int insert_before_line;
+    std::string first_half;
     std::string second_half;
-    std::string orig_first_half;
+    std::string orig_full_line;
 };
 
 #endif

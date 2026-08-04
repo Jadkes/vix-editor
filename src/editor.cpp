@@ -8,6 +8,8 @@
 #include <termios.h>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
+#include <cerrno>
 #include <regex>
 #include <climits>
 #include <fstream>
@@ -32,6 +34,51 @@ static bool is_word_char(char c) {
     return std::isalnum((unsigned char)c) || c == '_';
 }
 
+/* Filename extension -> lowercased string (no dot). */
+static std::string file_ext(const std::string& fname) {
+    size_t dot = fname.find_last_of(".");
+    if (dot == std::string::npos || dot == fname.length() - 1) return "";
+    std::string ext = fname.substr(dot + 1);
+    for (auto& c : ext) c = std::tolower((unsigned char)c);
+    return ext;
+}
+
+/* Exception-free test: is path a directory? */
+static bool is_dir(const fs::path& p) {
+    std::error_code ec;
+    return fs::is_directory(p, ec);
+}
+
+/* Run {argv} with working directory {wd}, no shell, and wait for exit.
+ * Returns the child's exit code, or -1 on failure to spawn. */
+static int run_process(const std::vector<std::string>& args, const std::string& wd) {
+    std::vector<char*> argv;
+    argv.reserve(args.size() + 1);
+    for (auto& a : args) argv.push_back(const_cast<char*>(a.c_str()));
+    argv.push_back(nullptr);
+
+    std::string dir = wd.empty() ? std::string(".") : wd;
+
+    pid_t pid = fork();
+    if (pid < 0) { std::fprintf(stderr, "vix: fork failed: %s\n", strerror(errno)); return -1; }
+    if (pid == 0) {
+        if (chdir(dir.c_str()) != 0) {
+            std::fprintf(stderr, "vix: cannot enter %s: %s\n", dir.c_str(), strerror(errno));
+            _exit(127);
+        }
+        execvp(argv[0], argv.data());
+        std::fprintf(stderr, "vix: cannot run %s: %s\n", argv[0], strerror(errno));
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        std::fprintf(stderr, "vix: wait for %s failed: %s\n", argv[0], strerror(errno));
+        return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return -1;
+}
+
 static size_t ifind(const std::string& hay, const std::string& needle, size_t pos) {
     for (size_t i = pos; i + needle.length() <= hay.length(); i++) {
         bool match = true;
@@ -53,8 +100,6 @@ Editor::Editor(int argc, char** argv)
     current_dir = fs::current_path().string();
     last_save_time = std::chrono::steady_clock::now();
     LoadSettings(settings);
-    ApplyTheme(themes[settings.theme]);
-    SaveSettings(settings);
 
     if (argc > 1) {
         new_tab(argv[1]);
@@ -66,18 +111,35 @@ Editor::Editor(int argc, char** argv)
 
 Editor::~Editor() {}
 
+void Editor::set_status(const std::string& msg) {
+    status_msg = msg;
+    msg_time = std::chrono::steady_clock::now();
+}
+
+void Editor::clamp_cursor(Tab& tab) {
+    if (tab.buffer.GetLineCount() == 0) return;
+    tab.y = std::clamp(tab.y, 0, tab.buffer.GetLineCount() - 1);
+    tab.x = std::clamp(tab.x, 0, (int)tab.buffer[tab.y].length());
+}
+
+bool Editor::is_untitled(const Buffer& buffer) {
+    return buffer.GetFilename().empty() || buffer.GetFilename().rfind("Untitled", 0) == 0;
+}
+
 void Editor::new_tab(const std::string& fname) {
     auto tab = std::make_unique<Tab>();
     if (!fname.empty()) {
         tab->buffer.LoadFile(fname);
         tab->buffer.SetFilename(fname);
+        if (tab->buffer.GetLineCount() > 0) tab->buffer.SetModified(false);
     } else {
         static const char* exts[] = {".txt", ".cpp", ".py", ".js", ".rs", ".go", ".c"};
-        int lang = settings.default_language;
+        int lang = std::clamp(settings.default_language, 0, 6);
         tab->buffer.PushBack("");
         tab->buffer.SetFilename("Untitled" + std::string(exts[lang]));
     }
     detect_language(*tab);
+    clear_search(*tab);
     tabs.push_back(std::move(tab));
     current_tab = (int)tabs.size() - 1;
 }
@@ -104,6 +166,7 @@ void Editor::switch_tab(int idx) {
     if (idx >= 0 && idx < (int)tabs.size()) {
         current_tab = idx;
         detect_language(*tabs[current_tab]);
+        clear_search(*tabs[current_tab]);
     }
 }
 
@@ -139,47 +202,72 @@ void Editor::detect_language(Tab& tab) {
 }
 
 void Editor::load_file(Tab& tab, const std::string& fname) {
+    if (fname.empty()) { set_status("Error: empty file name"); return; }
+    std::error_code ec;
+    if (!fs::exists(fname, ec)) {
+        set_status("Error: file not found: " + fname);
+        return;
+    }
+    if (fs::is_directory(fname, ec)) {
+        set_status("Error: is a directory: " + fname);
+        return;
+    }
     tab.buffer.LoadFile(fname);
     tab.buffer.SetFilename(fname);
     detect_language(tab);
     tab.buffer.SetModified(false);
     tab.y = 0; tab.x = 0;
-    status_msg = "Opened " + fname;
-    msg_time = std::chrono::steady_clock::now();
+    clear_search(tab);
+    set_status("Opened " + fname);
 }
 
-void Editor::save_file(Tab& tab) {
+bool Editor::save_file(Tab& tab) {
     auto& buf = tab.buffer;
-    if (buf.GetFilename().find("Untitled") == 0) {
-        buf.SetFilename(prompt("Save As: "));
+    if (is_untitled(buf)) {
+        std::string name = prompt("Save As: ");
+        if (name.empty()) return false;
+        buf.SetFilename(name);
     }
-    if (buf.GetFilename().empty()) return;
+    if (buf.GetFilename().empty()) return false;
+
+    fs::path parent = fs::path(buf.GetFilename()).parent_path();
+    if (!parent.empty()) {
+        std::error_code ec;
+        fs::create_directories(parent, ec);
+    }
     if (buf.SaveFile()) {
         last_save_time = std::chrono::steady_clock::now();
-        status_msg = "Saved!";
-    } else {
-        status_msg = "Error: save failed";
+        set_status("Saved!");
+        return true;
     }
-    msg_time = std::chrono::steady_clock::now();
+    set_status("Error: save failed: " + buf.GetFilename());
+    return false;
 }
 
 void Editor::update_sidebar() {
     sidebar_paths.clear();
     sidebar_paths.push_back("..");
+    std::vector<fs::path> dirs, files;
     try {
-        std::vector<fs::path> dirs, files;
         for (const auto& entry : fs::directory_iterator(current_dir)) {
-            if (entry.path().filename().string()[0] == '.') continue;
-            if (fs::is_directory(entry.path())) dirs.push_back(entry.path());
+            auto name = entry.path().filename().string();
+            if (name.empty() || name[0] == '.') continue;
+            if (is_dir(entry.path())) dirs.push_back(entry.path());
             else files.push_back(entry.path());
         }
-        std::sort(dirs.begin(), dirs.end());
-        std::sort(files.begin(), files.end());
-        for (auto& d : dirs) sidebar_paths.push_back(d);
-        for (auto& f : files) sidebar_paths.push_back(f);
-    } catch (...) {}
+    } catch (const std::exception& e) {
+        set_status("Error reading directory: " + std::string(e.what()));
+        sidebar_sel = 0;
+        sidebar_scroll = 0;
+        return;
+    }
+    std::sort(dirs.begin(), dirs.end());
+    std::sort(files.begin(), files.end());
+    for (auto& d : dirs) sidebar_paths.push_back(d);
+    for (auto& f : files) sidebar_paths.push_back(f);
     if (sidebar_sel >= (int)sidebar_paths.size()) sidebar_sel = (int)sidebar_paths.size() - 1;
     if (sidebar_sel < 0) sidebar_sel = 0;
+    if (sidebar_scroll > sidebar_sel) sidebar_scroll = sidebar_sel;
 }
 
 std::string Editor::prompt(const std::string& msg) {
@@ -377,28 +465,74 @@ void Editor::find_match(Tab& tab) {
 }
 
 void Editor::compile_run(Tab& tab) {
-    save_file(tab);
+    if (!save_file(tab) || is_untitled(tab.buffer))
+        return;
+
+    std::string cf = tab.buffer.GetFilename();
+    fs::path fpath(cf);
+    std::string ext = file_ext(cf);
+    std::string wd = fpath.parent_path().string();
+    std::error_code ec;
+    if (!fs::exists(cf, ec)) {
+        set_status("Error: file not found: " + cf);
+        return;
+    }
+
+    std::vector<std::string> run;
+    bool has_compile = true;
+    if (ext == "cpp" || ext == "cc" || ext == "cxx") {
+        run = {"g++", "-Wall", "-Wextra", cf, "-o", "run"};
+    } else if (ext == "c") {
+        run = {"gcc", "-Wall", "-Wextra", cf, "-o", "run"};
+    } else if (ext == "rs") {
+        run = {"rustc", cf, "-o", "run"};
+    } else if (ext == "py") {
+        run = {"python3", cf}; has_compile = false;
+    } else if (ext == "go") {
+        run = {"go", "run", cf}; has_compile = false;
+    } else if (ext == "js" || ext == "mjs") {
+        run = {"node", cf}; has_compile = false;
+    } else if (ext == "sh" || ext == "bash") {
+        run = {"bash", cf}; has_compile = false;
+    } else if (ext == "txt" || ext == "md" || ext == "json") {
+        set_status("No runner for: " + cf);
+        return;
+    } else {
+        set_status("Unknown file type: " + cf);
+        return;
+    }
+
     def_prog_mode();
     endwin();
-    system("reset -e && clear");
-    std::string cf = tab.buffer.GetFilename();
-    std::string cmd;
-    size_t dot = cf.find_last_of(".");
-    std::string ext = (dot != std::string::npos) ? cf.substr(dot + 1) : "";
-    if (ext == "cpp" || ext == "cc") cmd = "g++ \"" + cf + "\" -o run && ./run";
-    else if (ext == "c") cmd = "gcc \"" + cf + "\" -o run && ./run";
-    else if (ext == "py") cmd = "python3 \"" + cf + "\"";
-    else if (ext == "rs") cmd = "rustc \"" + cf + "\" -o run && ./run";
-    else if (ext == "go") cmd = "go run \"" + cf + "\"";
-    else if (ext == "js" || ext == "mjs") cmd = "node \"" + cf + "\"";
-    else if (ext == "sh") cmd = "bash \"" + cf + "\"";
-    if (!cmd.empty()) {
-        std::cout << "\033[1;33m>> RUN: " << cmd << "\033[0m\n";
-        system(cmd.c_str());
+    printf("\033[2J\033[H");
+
+    int rc = 0;
+    if (has_compile) {
+        printf(">> compile: %s ", run[0].c_str());
+        for (size_t i = 1; i < run.size(); i++) printf("%s ", run[i].c_str());
+        printf("\n");
+        fflush(stdout);
+        int c = run_process(run, wd);
+        if (c != 0) {
+            printf("\033[1;31m>> build failed (exit %d)\033[0m\n", c);
+        } else {
+            rc = run_process({"./run"}, wd);
+        }
+    } else {
+        printf(">> %s %s\n", run[0].c_str(), run.back().c_str());
+        fflush(stdout);
+        rc = run_process(run, wd);
     }
-    std::cout << "\nPress Enter...";
-    std::cin.ignore();
-    std::cin.get();
+
+    if (rc == 127)
+        printf("\033[1;31m>> error: '%s' not installed or not runnable\033[0m\n", run[0].c_str());
+
+    if (isatty(0)) {
+        printf("\nPress Enter...");
+        fflush(stdout);
+        int ch;
+        do { ch = getchar(); } while (ch != '\n' && ch != EOF);
+    }
     reset_prog_mode();
     refresh();
 }
@@ -431,7 +565,7 @@ void Editor::draw_tab_bar(int mx) {
 
     auto now = std::chrono::steady_clock::now();
     auto& tab = *tabs[current_tab];
-    if (settings.auto_save_interval > 0 && tab.buffer.IsModified() &&
+    if (settings.auto_save_interval > 0 && tab.buffer.IsModified() && !is_untitled(tab.buffer) &&
         std::chrono::duration_cast<std::chrono::seconds>(now - last_save_time).count() >= settings.auto_save_interval)
         save_file(tab);
 }
@@ -470,7 +604,7 @@ void Editor::draw_sidebar(int my, int mx) {
 
         std::string icon;
         if (n == "..") { icon = "\xE2\x86\xA2"; c = CP_KEYWORD; }
-        else if (fs::is_directory(sidebar_paths[idx])) icon = ">";
+        else if (is_dir(sidebar_paths[idx])) icon = ">";
         else if (ex == ".cpp" || ex == ".hpp") icon = "C";
         else if (ex == ".c") icon = "c";
         else if (ex == ".py") icon = "P";
@@ -486,7 +620,7 @@ void Editor::draw_sidebar(int my, int mx) {
         else if (ex == ".yaml" || ex == ".yml") icon = "Y";
         else icon = ".";
 
-        if (fs::is_directory(sidebar_paths[idx]) || n == "..") {
+        if (is_dir(sidebar_paths[idx]) || n == "..") {
             attron(A_BOLD | COLOR_PAIR(CP_KEYWORD));
         } else {
             attron(COLOR_PAIR(c));
@@ -496,7 +630,7 @@ void Editor::draw_sidebar(int my, int mx) {
         if (label.length() > 18) label = label.substr(0, 16) + "..";
         mvprintw(i + 2, 1, " %-18s", label.c_str());
 
-        if (fs::is_directory(sidebar_paths[idx]) || n == "..") {
+        if (is_dir(sidebar_paths[idx]) || n == "..") {
             attroff(A_BOLD | COLOR_PAIR(CP_KEYWORD));
         } else {
             attroff(COLOR_PAIR(c));
@@ -702,6 +836,16 @@ void Editor::run() {
     ApplyTheme(themes[settings.theme]);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
 
+    auto cleanup = [&]() {
+        noraw();
+        echo();
+        if (curscr) endwin();
+        tcsetattr(0, TCSANOW, &ot);
+        printf("\033[0m");
+        fflush(stdout);
+    };
+
+    try {
     while (running) {
         int my, mx;
         getmaxyx(stdscr, my, mx);
@@ -722,6 +866,12 @@ void Editor::run() {
 
         draw();
         int ch = getch();
+
+        if (ch == KEY_RESIZE) {
+            resizeterm(0, 0);
+            refresh();
+            continue;
+        }
 
         if (ch == KEY_MOUSE) {
             MEVENT event;
@@ -958,20 +1108,44 @@ void Editor::run() {
                 std::string n = prompt("New File: ");
                 if (!n.empty()) {
                     std::ofstream f(n);
-                    f.close();
-                    update_sidebar();
+                    if (f.is_open()) {
+                        f.close();
+                        set_status("Created " + n);
+                        update_sidebar();
+                    } else {
+                        set_status("Error: cannot create " + n);
+                    }
                 }
             } else if (ch == 'd') {
                 if (sidebar_sel > 0) {
-                    fs::remove_all(sidebar_paths[sidebar_sel]);
-                    update_sidebar();
+                    std::error_code ec;
+                    std::uintmax_t removed = fs::remove_all(sidebar_paths[sidebar_sel], ec);
+                    if (ec || removed == 0)
+                        set_status("Error: cannot delete " + sidebar_paths[sidebar_sel].filename().string());
+                    else {
+                        set_status("Deleted " + sidebar_paths[sidebar_sel].filename().string());
+                        update_sidebar();
+                    }
                 }
             } else if (ch == '\n') {
-                if (fs::is_directory(sidebar_paths[sidebar_sel])) {
-                    current_dir = fs::canonical(sidebar_paths[sidebar_sel]).string();
-                    fs::current_path(current_dir);
-                    sidebar_sel = 0;
-                    update_sidebar();
+                if (is_dir(sidebar_paths[sidebar_sel])) {
+                    std::error_code ec;
+                    fs::path target = fs::canonical(sidebar_paths[sidebar_sel], ec);
+                    if (ec) {
+                        set_status("Error: cannot enter directory");
+                    } else {
+                        fs::path old_cwd = fs::current_path();
+                        fs::current_path(target, ec);
+                        if (ec) {
+                            fs::current_path(old_cwd);
+                            set_status("Error: cannot change directory");
+                        } else {
+                            current_dir = target.string();
+                            sidebar_sel = 0;
+                            sidebar_scroll = 0;
+                            update_sidebar();
+                        }
+                    }
                 } else {
                     load_file(tab, sidebar_paths[sidebar_sel].string());
                     focus_sidebar = false;
@@ -1003,27 +1177,30 @@ void Editor::run() {
                 }
             } else if (ch == '\n') {
                 if (tab.y < tab.buffer.GetLineCount()) {
-                    std::string rest = (tab.x < (int)tab.buffer[tab.y].length()) ? tab.buffer[tab.y].substr(tab.x) : "";
+                    std::string first_half = tab.buffer[tab.y].substr(0, tab.x);
+                    std::string rest = tab.buffer[tab.y].substr(tab.x);
                     std::string indent;
                     for (int i = 0; i < tab.x && i < (int)tab.buffer[tab.y].length(); i++) {
                         if (tab.buffer[tab.y][i] == ' ' || tab.buffer[tab.y][i] == '\t') indent += tab.buffer[tab.y][i];
                         else break;
                     }
-                    std::string trimmed = tab.buffer[tab.y].substr(0, tab.x);
-                    while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t'))
-                        trimmed.pop_back();
-                    if (!trimmed.empty()) {
-                        char last = trimmed.back();
-                        if (last == '{' || last == '(' || last == '[' || last == ':')
-                            indent += std::string(settings.tab_width, ' ');
+                    if (settings.auto_indent) {
+                        std::string trimmed = first_half;
+                        while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t'))
+                            trimmed.pop_back();
+                        if (!trimmed.empty()) {
+                            char last = trimmed.back();
+                            if (last == '{' || last == '(' || last == '[' || last == ':')
+                                indent += std::string(settings.tab_width, ' ');
+                        }
                     }
-                    std::string orig = tab.buffer[tab.y];
-                    tab.buffer[tab.y] = (tab.x < (int)tab.buffer[tab.y].length()) ?
-                        tab.buffer[tab.y].substr(0, tab.x) : tab.buffer[tab.y];
-                    auto cmd = std::make_unique<NewLineCommand>(&tab.buffer, tab.y + 1, indent + rest, orig);
-                    tab.history.execute(std::move(cmd));
-                    tab.y++;
-                    tab.x = (int)indent.length();
+                    auto cmd = std::make_unique<NewLineCommand>(&tab.buffer, tab.y + 1,
+                                                               first_half, indent + rest,
+                                                               tab.buffer[tab.y]);
+                    if (tab.history.execute(std::move(cmd))) {
+                        tab.y++;
+                        tab.x = (int)indent.length();
+                    }
                 }
             } else if (ch >= 32 && ch <= 126) {
                 if (tab.y < tab.buffer.GetLineCount() && tab.x <= (int)tab.buffer[tab.y].length()) {
@@ -1056,10 +1233,16 @@ void Editor::run() {
             find_match(tab);
         }
     }
+    } catch (const std::exception& e) {
+        cleanup();
+        std::fprintf(stderr, "vix: internal error: %s\n", e.what());
+        return;
+    } catch (...) {
+        cleanup();
+        std::fprintf(stderr, "vix: unknown internal error\n");
+        return;
+    }
 
-    noraw();
-    echo();
-    endwin();
-    tcsetattr(0, TCSANOW, &ot);
+    cleanup();
     system("stty sane && clear");
 }
