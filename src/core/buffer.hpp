@@ -1,6 +1,12 @@
+/*
+ * buffer.hpp - Line store for a single open document
+ *
+ * A Buffer owns the lines of one file plus its name and dirty flag. It is
+ * the single unit editors read/write; History commands mutate a Buffer.
+ * Deliberately free of ncurses so it can be tested standalone.
+ */
 #ifndef VIX_BUFFER_HPP
 #define VIX_BUFFER_HPP
-
 #include <string>
 #include <vector>
 #include <fstream>

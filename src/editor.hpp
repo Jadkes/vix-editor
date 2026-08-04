@@ -1,3 +1,11 @@
+/*
+ * editor.hpp - ncurses front-end and the main event loop
+ *
+ * Editor owns the tab list (each Tab couples a Buffer, its History and its
+ * cursor/scroll state) and the whole-screen UI (tab bar, sidebar, status,
+ * search). run() dispatches every keypress; a try/catch around it restores
+ * the terminal if anything throws so the user is never left in raw mode.
+ */
 #pragma once
 #include <vector>
 #include <string>
@@ -30,6 +38,9 @@ namespace fs = std::filesystem;
 #define CP_SELECT  11
 #define CP_MATCH   12
 #define CP_SEARCH  13
+
+// Width of the line-number gutter when enabled: 3 digit columns + 1 space.
+static constexpr int LINENUM_WIDTH = 4;
 
 struct SyntaxRules {
     int lang;

@@ -1,3 +1,11 @@
+/*
+ * editor.cpp - UI rendering, input dispatch, and file/project handling
+ *
+ * draw() paints tab bar, sidebar and the visible text each frame; run()
+ * reads keys and applies edits through the History stack. Rendering only
+ * touches the in-viewport portion of the buffer, and everything screen
+ * state is restored by the catch handler if an exception escapes run().
+ */
 #include "editor.hpp"
 #include <iostream>
 #include <algorithm>
@@ -648,7 +656,7 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
         mvprintw(row, sw, "%3d ", buf_idx + 1);
         attroff(COLOR_PAIR(CP_LINENUM));
     }
-    int cur_x = sw + (settings.line_numbers ? 4 : 0);
+    int cur_x = sw + (settings.line_numbers ? LINENUM_WIDTH : 0);
     int i = tab.h_scroll;
     while (i < (int)line.length() && cur_x < max_x) {
         bool is_search_start = false;
@@ -813,7 +821,7 @@ void Editor::draw() {
         move(my - 1, sx);
     } else {
         int cy = std::clamp(tab.y - tab.v_scroll + 1, 1, my - 2);
-        int cx = std::clamp(tab.x - tab.h_scroll + sw + (settings.line_numbers ? 4 : 0), 0, mx - 1);
+        int cx = std::clamp(tab.x - tab.h_scroll + sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
         move(cy, cx);
     }
     refresh();
@@ -859,7 +867,7 @@ void Editor::run() {
         if (tab.y >= tab.v_scroll + my - 2) tab.v_scroll = tab.y - (my - 2) + 1;
 
         int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
-        int text_w = mx - sw - (settings.line_numbers ? 4 : 0);
+        int text_w = mx - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
         if (text_w < 1) text_w = 1;
         if (tab.h_scroll < 0) tab.h_scroll = 0;
         if (tab.x < tab.h_scroll) tab.h_scroll = tab.x;
@@ -914,7 +922,7 @@ void Editor::run() {
                         focus_sidebar = false;
                         int clicked_y = event.y - 1 + tab.v_scroll;
                         int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
-                        int clicked_x = event.x - sw - (settings.line_numbers ? 4 : 0) + tab.h_scroll;
+                        int clicked_x = event.x - sw - (settings.line_numbers ? LINENUM_WIDTH : 0) + tab.h_scroll;
                         if (clicked_y >= 0 && clicked_y < tab.buffer.GetLineCount()) {
                             tab.y = clicked_y;
                             tab.x = std::max(0, std::min((int)tab.buffer[tab.y].length(), clicked_x));

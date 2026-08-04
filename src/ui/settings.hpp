@@ -1,8 +1,14 @@
+/*
+ * settings.hpp - User preferences and theme table
+ *
+ * Settings are struct fields with default values; they are loaded from and
+ * saved to a JSON file and edited from the F2 panel. The theme array maps
+ * the color-pair constants used by the editor to fg/bg curses indices.
+ */
 #ifndef VIX_SETTINGS_HPP
 #define VIX_SETTINGS_HPP
 
 #include <string>
-
 struct Theme {
     std::string name;
     int fg[16];

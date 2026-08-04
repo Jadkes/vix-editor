@@ -1,3 +1,10 @@
+/*
+ * history.cpp - Grow/shrink undo and redo stacks via Command objects
+ *
+ * execute() pushes onto undo_stack and clears redo_stack (a fresh edit
+ * invalidates forward history); undo() moves the top command across, and
+ * redo() plays it forward again. trimStack keeps each stack bounded.
+ */
 #include "history.hpp"
 #include "../core/buffer.hpp"
 #include <algorithm>
@@ -9,7 +16,7 @@ bool History::execute(CommandPtr cmd) {
     if (!cmd->execute()) return false;
     undo_stack.push_back(std::move(cmd));
     trimStack(undo_stack);
-    redo_stack.clear();
+    redo_stack.clear();  // any new edit discards the redo path
     return true;
 }
 
@@ -81,6 +88,7 @@ NewLineCommand::NewLineCommand(Buffer* buf, int insert_before_line,
 bool NewLineCommand::execute() {
     if (!buffer) return false;
     if (insert_before_line < 1 || insert_before_line > buffer->GetLineCount()) return false;
+    // Rewrite the split line and insert the dangling half below it.
     (*buffer)[insert_before_line - 1] = first_half;
     buffer->InsertLine(insert_before_line, second_half);
     return true;
@@ -90,6 +98,7 @@ bool NewLineCommand::undo() {
     if (!buffer) return false;
     if (insert_before_line >= buffer->GetLineCount()) return false;
     buffer->EraseLine(insert_before_line);
+    // Restore the original unsplit line so undo/redo round-trips exactly.
     if (insert_before_line > 0 && insert_before_line - 1 < buffer->GetLineCount())
         (*buffer)[insert_before_line - 1] = orig_full_line;
     return true;

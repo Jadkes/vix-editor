@@ -1,3 +1,11 @@
+/*
+ * settings.cpp - Theme table, JSON-ish settings load/save, settings panel
+ *
+ * Settings live in ~/.config/vix/settings.json. The loader is a small
+ * hand-rolled parser (no JSON dependency) that reads each known key and
+ * clamps ranges, so a corrupt or hand-written file can never crash the
+ * editor or put a value out of bounds.
+ */
 #include "settings.hpp"
 #include <ncurses.h>
 #include <fstream>
@@ -116,12 +124,22 @@ static const char* LABELS[] = {
     "Tab Width", "Auto-Save Interval", "Line Numbers",
     "Auto-Indent", "Theme", "Default Language", "Word Wrap"
 };
-static const int LABEL_COUNT = 7;
+static constexpr int LABEL_COUNT = 7;
+static constexpr int LANG_COUNT  = 7;
+static constexpr int TAB_W_COUNT = 3;
+static constexpr int SAVE_I_COUNT = 6;
 
 static const int TAB_W[] = {2, 4, 8};
 static const int SAVE_I[] = {0, 5, 10, 20, 30, 60};
 static const int LANG_IDS[] = {1, 6, 2, 3, 4, 5, 0};
 static const char* LANG_NS[] = {"C++", "C", "Python", "JavaScript", "Rust", "Go", "Text"};
+
+// Settings-panel geometry.
+static constexpr int PANEL_W  = 50;
+static constexpr int PANEL_H  = 14;
+static constexpr int LABEL_W  = 24;  // setting-name column width
+static constexpr int VALUE_W  = 16;  // setting-value column width
+static constexpr int HINT_ROW = 10;  // first row of the footer key hints
 
 static std::string ValStr(const Settings& s, int row) {
     switch (row) {
@@ -130,7 +148,7 @@ static std::string ValStr(const Settings& s, int row) {
         case 2: return s.line_numbers ? "Yes" : "No";
         case 3: return s.auto_indent ? "Yes" : "No";
         case 4: return (s.theme >= 0 && s.theme < THEME_COUNT) ? THEME_NAMES[s.theme] : "?";
-        case 5: for (int i = 0; i < 7; i++) if (LANG_IDS[i] == s.default_language) return LANG_NS[i]; return "?";
+        case 5: for (int i = 0; i < LANG_COUNT; i++) if (LANG_IDS[i] == s.default_language) return LANG_NS[i]; return "?";
         case 6: return s.word_wrap ? "Yes" : "No";
         default: return "";
     }
@@ -144,12 +162,12 @@ static void Cycle(Settings& s, int row, int dir) {
         val = arr[cur];
     };
     switch (row) {
-        case 0: cycle(s.tab_width, TAB_W, 3); break;
-        case 1: cycle(s.auto_save_interval, SAVE_I, 6); break;
+        case 0: cycle(s.tab_width, TAB_W, TAB_W_COUNT); break;
+        case 1: cycle(s.auto_save_interval, SAVE_I, SAVE_I_COUNT); break;
         case 2: s.line_numbers = !s.line_numbers; break;
         case 3: s.auto_indent = !s.auto_indent; break;
         case 4: { int old = s.theme; s.theme = (s.theme + dir + THEME_COUNT) % THEME_COUNT; if (s.theme != old) ApplyTheme(themes[s.theme]); break; }
-        case 5: { int lang_n = 7; int cur = 0; for (int i = 0; i < lang_n; i++) if (LANG_IDS[i] == s.default_language) { cur = i; break; } cur = (cur + dir + lang_n) % lang_n; s.default_language = LANG_IDS[cur]; break; }
+        case 5: { int cur = 0; for (int i = 0; i < LANG_COUNT; i++) if (LANG_IDS[i] == s.default_language) { cur = i; break; } cur = (cur + dir + LANG_COUNT) % LANG_COUNT; s.default_language = LANG_IDS[cur]; break; }
         case 6: s.word_wrap = !s.word_wrap; break;
     }
     SaveSettings(s);
@@ -158,11 +176,10 @@ static void Cycle(Settings& s, int row, int dir) {
 void ShowSettingsPanel(Settings& s) {
     int my, mx;
     getmaxyx(stdscr, my, mx);
-    const int PH = 14, PW = 50;
-    int wy = (my - PH) / 2, wx = (mx - PW) / 2;
+    int wy = (my - PANEL_H) / 2, wx = (mx - PANEL_W) / 2;
     if (wy < 0) wy = 0;
     if (wx < 0) wx = 0;
-    WINDOW* pw = newwin(PH, PW, wy, wx);
+    WINDOW* pw = newwin(PANEL_H, PANEL_W, wy, wx);
     if (!pw) return;
     keypad(pw, TRUE);
     int sel = 0;
@@ -173,13 +190,13 @@ void ShowSettingsPanel(Settings& s) {
         for (int i = 0; i < LABEL_COUNT; i++) {
             int ry = 2 + i;
             std::string val = ValStr(s, i);
-            if (i == sel) { wattron(pw, A_REVERSE); mvwprintw(pw, ry, 2, "%-24s %-16s", LABELS[i], val.c_str()); wattroff(pw, A_REVERSE); }
-            else mvwprintw(pw, ry, 2, " %-23s %-16s", LABELS[i], val.c_str());
+            if (i == sel) { wattron(pw, A_REVERSE); mvwprintw(pw, ry, 2, "%-*s %-*s", LABEL_W, LABELS[i], VALUE_W, val.c_str()); wattroff(pw, A_REVERSE); }
+            else mvwprintw(pw, ry, 2, " %-*s %-*s", LABEL_W - 1, LABELS[i], VALUE_W, val.c_str());
         }
-        mvwprintw(pw, 10, 2, " %-46s", "");
-        mvwprintw(pw, 11, 2, " %-46s", "");
-        mvwprintw(pw, 10, 2, " \x18\x19 Navigate  \x1b\x1a/Enter Change  Esc Close");
-        mvwprintw(pw, 12, 2, " Settings saved to ~/.config/vix/settings.json");
+        mvwprintw(pw, HINT_ROW, 2, " %-*s", PANEL_W - 4, "");
+        mvwprintw(pw, HINT_ROW + 1, 2, " %-*s", PANEL_W - 4, "");
+        mvwprintw(pw, HINT_ROW, 2, " \x18\x19 Navigate  \x1b\x1a/Enter Change  Esc Close");
+        mvwprintw(pw, HINT_ROW + 2, 2, " Settings saved to ~/.config/vix/settings.json");
         wrefresh(pw);
         int ch = wgetch(pw);
         switch (ch) {

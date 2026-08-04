@@ -1,11 +1,24 @@
+/*
+ * buffer.cpp - Line store for a single open document
+ *
+ * Keeps text as a std::vector<std::string> of lines (one entry per \n
+ * terminator). The ends_with_newline flag records whether the source file
+ * ended in a newline, so SaveFile can round-trip byte-for-byte instead of
+ * silently appending or dropping a trailing newline.
+ *
+ * Not thread-safe; the editor only touches a buffer from the main loop.
+ */
 #include "buffer.hpp"
 
 Buffer::Buffer() : filename(""), modified(false), ends_with_newline(false) { lines.push_back(""); }
 
 void Buffer::LoadFile(const std::string& fname) {
     std::ifstream f(fname, std::ios::binary);
+    // A missing/unreadable file opens as one empty line so the editor never
+    // has to special-case a zero-line buffer.
     if (!f.is_open()) { lines.clear(); lines.push_back(""); filename = fname; return; }
     lines.clear(); filename = fname;
+    // Peek the last byte to remember whether the file ends in a newline.
     f.seekg(0, std::ios::end);
     ends_with_newline = (f.tellg() > 0);
     if (ends_with_newline) {
@@ -15,7 +28,7 @@ void Buffer::LoadFile(const std::string& fname) {
     f.seekg(0, std::ios::beg);
     std::string l;
     while (std::getline(f, l)) {
-        if (!l.empty() && l.back() == '\r') l.pop_back();
+        if (!l.empty() && l.back() == '\r') l.pop_back();  // strip CR for CRLF files
         lines.push_back(l);
     }
     if (lines.empty()) lines.push_back("");
@@ -27,6 +40,8 @@ bool Buffer::SaveFile() {
     if (filename.empty()) return false;
     std::ofstream f(filename);
     if (!f.is_open()) return false;
+    // Every line but the last gets a newline; the last gets one only if the
+    // original file ended with one. Not splitting drives the exact restore.
     for (size_t i = 0; i < lines.size(); i++) {
         if (i + 1 < lines.size() || ends_with_newline)
             f << lines[i] << "\n";
@@ -40,6 +55,7 @@ bool Buffer::SaveFile() {
 
 void Buffer::Insert(int line, int col, const std::string& text) {
     if (line < 0 || line >= (int)lines.size()) return;
+    // Clamp so a stale cursor position from an undo/redo still lands in-bounds.
     if (col < 0) col = 0;
     if (col > (int)lines[line].length()) col = (int)lines[line].length();
     lines[line].insert(col, text);
@@ -55,6 +71,8 @@ void Buffer::Delete(int line, int col, int count) {
 }
 
 std::string& Buffer::operator[](int n) {
+    // Throws rather than returning a dangling reference so bugs surface as a
+    // caught exception instead of silent corruption.
     if (n < 0 || n >= (int)lines.size())
         throw std::out_of_range("Buffer::operator[]: index " + std::to_string(n) + " out of range");
     return lines[n];
@@ -70,6 +88,7 @@ void Buffer::PushBack(const std::string& line) { lines.push_back(line); }
 void Buffer::EraseLine(int n) {
     if (n < 0 || n >= (int)lines.size()) return;
     lines.erase(lines.begin() + n);
+    // Never leave the document empty of lines; callers assume at least one.
     if (lines.empty()) lines.push_back("");
     modified = true;
 }
