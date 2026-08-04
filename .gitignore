@@ -8,7 +8,12 @@ run
 # Build directories
 build/
 build-debug/
+build-release/
+dist/
 tests/build/
+
+# Release archives
+vix-*.tar.gz
 
 # Clangd language-server index cache
 .cache/

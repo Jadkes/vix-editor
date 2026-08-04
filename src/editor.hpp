@@ -12,6 +12,11 @@
 
 namespace fs = std::filesystem;
 
+#ifndef VIX_VERSION
+#define VIX_VERSION "1.0.0"
+#endif
+#define VIX_NAME "vix"
+
 #define CP_DEFAULT 1
 #define CP_KEYWORD 2
 #define CP_STRING  3

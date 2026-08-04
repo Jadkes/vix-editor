@@ -107,6 +107,7 @@ Editor::Editor(int argc, char** argv)
         new_tab();
     }
     update_sidebar();
+    set_status(std::string(VIX_NAME) + " " + VIX_VERSION + " — ^H for help");
 }
 
 Editor::~Editor() {}
@@ -1058,7 +1059,7 @@ void Editor::run() {
             WINDOW* hw = newwin(12, 50, (myw - 12) / 2, (mxw - 50) / 2);
             if (hw) {
                 box(hw, 0, 0);
-                mvwprintw(hw, 0, 2, " VIX HELP ");
+                mvwprintw(hw, 0, 2, " %s %s - VIX HELP ", VIX_NAME, VIX_VERSION);
                 mvwprintw(hw, 2, 2, "^S: Save   ^Q: Quit   ^R: Run   F2: Settings");
                 mvwprintw(hw, 3, 2, "^K: Kill   ^C: Copy   ^V: Paste   ^P: Find");
                 mvwprintw(hw, 4, 2, "^F: Search F3: Next  S+F3: Prev");

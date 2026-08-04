@@ -21,5 +21,6 @@ add_executable(vix
 
 target_link_libraries(vix PRIVATE ${CURSES_LIBRARIES})
 target_include_directories(vix PRIVATE ${CURSES_INCLUDE_DIR})
+target_compile_definitions(vix PRIVATE VIX_VERSION="${PROJECT_VERSION}")
 
 install(TARGETS vix RUNTIME DESTINATION bin)

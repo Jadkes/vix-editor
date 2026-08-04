@@ -6,6 +6,22 @@ Vix is a C++ terminal text editor with a tabbed buffer, a file-explorer sidebar,
 
 ---
 
+## Release 1.0.0
+
+Latest release: **[1.0.0](https://github.com/Jadkeskes/vix-editor/releases/tag/1.0)** — prebuilt **x86_64 Linux** binary.
+
+### Install the binary (no build required)
+
+```bash
+curl -L -o vix-1.0.0-linux-x86_64.tar.gz \
+  https://github.com/Jadkeskes/vix-editor/releases/download/1.0/vix-1.0.0-linux-x86_64.tar.gz
+tar xzf vix-1.0.0-linux-x86_64.tar.gz
+sudo install -m755 vix-1.0.0-linux-x86_64/vix /usr/local/bin/
+vix --version   # → vix 1.0.0
+```
+
+---
+
 ## Requirements
 
 - C++20 compiler (GCC or Clang)
