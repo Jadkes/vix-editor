@@ -27,11 +27,25 @@
 #define CTRL(c) ((c) & 0x1f)
 #endif
 
-static bool is_prefix(const std::string& s, const std::string& of) {
-    if (s.size() > of.size()) return false;
-    for (size_t i = 0; i < s.size(); i++)
-        if (std::tolower((unsigned char)s[i]) != std::tolower((unsigned char)of[i])) return false;
-    return true;
+// Score how well query matches text as a subsequence, or -1 when it cannot.
+// Word starts (after / . _ -, or a lowercase->uppercase boundary) and
+// consecutive matched runs score higher; the path length is subtracted so a
+// tight, short match outranks a scattered one in a longer path.
+static int fuzzy_score(const std::string& q, const std::string& s) {
+    size_t qi = 0;
+    int score = 0;
+    for (size_t i = 0; i < s.size() && qi < q.size(); i++) {
+        char lq = std::tolower((unsigned char)q[qi]);
+        if (std::tolower((unsigned char)s[i]) != lq) continue;
+        bool word_start = (i == 0) || s[i-1] == '/' || s[i-1] == '.' || s[i-1] == '_' || s[i-1] == '-' ||
+                          (std::isupper((unsigned char)s[i]) && std::islower((unsigned char)s[i-1]));
+        if (word_start) score += 10;
+        else if (i > 0 && std::tolower((unsigned char)s[i-1]) == lq) score += 5;
+        else score += 1;
+        qi++;
+    }
+    if (qi < q.size()) return -1;
+    return score - (int)s.size();
 }
 
 static bool iequal(char a, char b) {
@@ -296,7 +310,6 @@ void Editor::fuzzy_finder() {
     std::string q = prompt("Find File: ");
     if (q.empty()) return;
 
-    std::vector<std::string> matches;
     std::vector<std::string> all_files;
     all_files.push_back("..");
     try {
@@ -309,17 +322,25 @@ void Editor::fuzzy_finder() {
         }
     } catch (...) {}
 
-    for (auto& f : all_files) {
-        if (is_prefix(q, f)) matches.push_back(f);
+    std::vector<std::pair<int, std::string>> scored;
+    for (const auto& f : all_files) {
+        int sc = fuzzy_score(q, f);
+        if (sc >= 0) scored.emplace_back(sc, f);
     }
 
-    if (matches.empty()) {
+    if (scored.empty()) {
         status_msg = "No matches";
         msg_time = std::chrono::steady_clock::now();
         return;
     }
 
-    std::sort(matches.begin(), matches.end());
+    std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+        if (a.first != b.first) return a.first > b.first;
+        return a.second < b.second;
+    });
+    std::vector<std::string> matches;
+    matches.reserve(scored.size());
+    for (const auto& s : scored) matches.push_back(s.second);
 
     int my, mx;
     getmaxyx(stdscr, my, mx);
@@ -809,6 +830,12 @@ void Editor::draw() {
 
     draw_status(my, mx);
 
+    place_cursor(my, mx, tab);
+    refresh();
+}
+
+void Editor::place_cursor(int my, int mx, Tab& tab) {
+    int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
     if (focus_sidebar) {
         int sy = std::clamp(sidebar_sel - sidebar_scroll + 2, 1, my - 2);
         move(sy, 1);
@@ -824,7 +851,6 @@ void Editor::draw() {
         int cx = std::clamp(tab.x - tab.h_scroll + sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
         move(cy, cx);
     }
-    refresh();
 }
 
 void Editor::run() {
@@ -855,6 +881,11 @@ void Editor::run() {
     };
 
     try {
+    bool redraw = true;
+    bool drawn_match_active = false;
+    int drawn_match_x = 0, drawn_match_y = 0;
+    int drawn_vs = -1, drawn_hs = -1;
+
     while (running) {
         int my, mx;
         getmaxyx(stdscr, my, mx);
@@ -873,16 +904,35 @@ void Editor::run() {
         if (tab.x < tab.h_scroll) tab.h_scroll = tab.x;
         if (tab.x >= tab.h_scroll + text_w) tab.h_scroll = tab.x - text_w + 1;
 
-        draw();
+        // Pure cursor moves repaint only the status row and cursor instead of
+        // the whole viewport; anything that changes text, scroll, the sidebar
+        // or the match highlight takes the full redraw path below.
+        bool match_changed = (match_pos.active != drawn_match_active) ||
+                             (match_pos.active && (match_pos.x != drawn_match_x || match_pos.y != drawn_match_y));
+        if (redraw || match_changed || tab.v_scroll != drawn_vs || tab.h_scroll != drawn_hs) {
+            draw();
+            redraw = false;
+            drawn_vs = tab.v_scroll;
+            drawn_hs = tab.h_scroll;
+            drawn_match_active = match_pos.active;
+            drawn_match_x = match_pos.x;
+            drawn_match_y = match_pos.y;
+        } else {
+            draw_status(my, mx);
+            place_cursor(my, mx, tab);
+            refresh();
+        }
         int ch = getch();
 
         if (ch == KEY_RESIZE) {
             resizeterm(0, 0);
+            redraw = true;
             refresh();
             continue;
         }
 
         if (ch == KEY_MOUSE) {
+            redraw = true;
             MEVENT event;
             if (getmouse(&event) == OK) {
                 if (event.bstate & BUTTON4_PRESSED) {
@@ -962,6 +1012,7 @@ void Editor::run() {
                 search_query += (char)ch;
                 find_all(tab, search_query);
             }
+            redraw = true;
             continue;
         }
 
@@ -976,22 +1027,24 @@ void Editor::run() {
             }
             running = false;
         }
-        else if (ch == CTRL('s')) save_file(tab);
-        else if (ch == CTRL('r')) compile_run(tab);
-        else if (ch == CTRL('w')) focus_sidebar = !focus_sidebar;
-        else if (ch == CTRL('t')) show_sidebar = !show_sidebar;
+        else if (ch == CTRL('s')) { save_file(tab); redraw = true; }
+        else if (ch == CTRL('r')) { compile_run(tab); redraw = true; }
+        else if (ch == CTRL('w')) { focus_sidebar = !focus_sidebar; redraw = true; }
+        else if (ch == CTRL('t')) { show_sidebar = !show_sidebar; redraw = true; }
         else if (ch == KEY_F(2)) {
             def_prog_mode();
             endwin();
             ShowSettingsPanel(settings);
             reset_prog_mode();
             refresh();
+            redraw = true;
         }
-        else if (ch == CTRL('n')) new_tab();
+        else if (ch == CTRL('n')) { new_tab(); redraw = true; }
         else if (ch == 9) {
             auto cmd = std::make_unique<InsertCommand>(&tab.buffer, std::string(settings.tab_width, ' '), tab.y, tab.x);
             tab.history.execute(std::move(cmd));
             tab.x += settings.tab_width;
+            redraw = true;
         }
         else if (ch == CTRL('k')) {
             if (tab.y < tab.buffer.GetLineCount()) {
@@ -1000,6 +1053,7 @@ void Editor::run() {
                 tab.history.execute(std::move(cmd));
                 tab.x = 0;
             }
+            redraw = true;
         }
         else if (ch == CTRL('c')) {
             if (tab.y < tab.buffer.GetLineCount()) {
@@ -1007,6 +1061,7 @@ void Editor::run() {
                 status_msg = "Copied";
                 msg_time = std::chrono::steady_clock::now();
             }
+            redraw = true;
         }
         else if (ch == CTRL('v')) {
             if (!tab.clipboard.empty()) {
@@ -1014,18 +1069,22 @@ void Editor::run() {
                 tab.history.execute(std::move(cmd));
                 tab.x += (int)tab.clipboard.length();
             }
+            redraw = true;
         }
         else if (ch == CTRL('f')) {
             in_search_mode = true;
             search_query.clear();
             search_results.clear();
             search_idx = -1;
+            redraw = true;
         }
         else if (ch == KEY_F(3)) {
             if (!search_results.empty()) search_next(tab);
+            redraw = true;
         }
         else if (ch == KEY_F(13)) {
             if (!search_results.empty()) search_prev(tab);
+            redraw = true;
         }
         else if (ch == CTRL('d')) {
             std::string q = prompt("Find: ");
@@ -1045,6 +1104,7 @@ void Editor::run() {
                 status_msg = "Replaced " + std::to_string(count) + " occurrence" + (count != 1 ? "s" : "");
             } else status_msg = "Not found: " + q;
             msg_time = std::chrono::steady_clock::now();
+            redraw = true;
         }
         else if (ch == CTRL('g')) {
             std::string input = prompt("Go To Line: ");
@@ -1057,9 +1117,11 @@ void Editor::run() {
                 } catch (...) { status_msg = "Invalid line number"; }
                 msg_time = std::chrono::steady_clock::now();
             }
+            redraw = true;
         }
         else if (ch == CTRL('p')) {
             fuzzy_finder();
+            redraw = true;
         }
         else if (ch == CTRL('h')) {
             int myw, mxw;
@@ -1079,6 +1141,7 @@ void Editor::run() {
                 wrefresh(hw);
                 wgetch(hw);
                 delwin(hw);
+                redraw = true;
             }
         }
         else if (ch == CTRL('z')) {
@@ -1088,6 +1151,7 @@ void Editor::run() {
                 tab.x = std::min(tab.x, std::max(0, (int)tab.buffer[tab.y].length()));
             } else status_msg = "[Nothing to undo]";
             msg_time = std::chrono::steady_clock::now();
+            redraw = true;
         }
         else if (ch == CTRL('y')) {
             if (tab.history.redo()) {
@@ -1096,21 +1160,26 @@ void Editor::run() {
                 tab.x = std::min(tab.x, std::max(0, (int)tab.buffer[tab.y].length()));
             } else status_msg = "[Nothing to redo]";
             msg_time = std::chrono::steady_clock::now();
+            redraw = true;
         }
         else if (ch == KEY_BTAB) {
             int prev = (current_tab - 1 + (int)tabs.size()) % (int)tabs.size();
             switch_tab(prev);
+            redraw = true;
         }
         else if (ch == KEY_F(5)) {
             int next = (current_tab + 1) % (int)tabs.size();
             switch_tab(next);
+            redraw = true;
         }
         else if (ch == 28) {
             close_tab(current_tab);
             if (!running) break;
+            redraw = true;
             continue;
         }
         else if (focus_sidebar) {
+            redraw = true;
             if (ch == KEY_UP && sidebar_sel > 0) sidebar_sel--;
             else if (ch == KEY_DOWN && sidebar_sel < (int)sidebar_paths.size() - 1) sidebar_sel++;
             else if (ch == 'a') {
@@ -1184,6 +1253,7 @@ void Editor::run() {
                     tab.y--;
                     tab.buffer.SetModified(true);
                 }
+                redraw = true;
             } else if (ch == '\n') {
                 if (tab.y < tab.buffer.GetLineCount()) {
                     std::string first_half = tab.buffer[tab.y].substr(0, tab.x);
@@ -1211,6 +1281,7 @@ void Editor::run() {
                         tab.x = (int)indent.length();
                     }
                 }
+                redraw = true;
             } else if (ch >= 32 && ch <= 126) {
                 if (tab.y < tab.buffer.GetLineCount() && tab.x <= (int)tab.buffer[tab.y].length()) {
                     if (ch == '(') {
@@ -1235,6 +1306,7 @@ void Editor::run() {
                         tab.x++;
                     }
                 }
+                redraw = true;
             }
         }
 

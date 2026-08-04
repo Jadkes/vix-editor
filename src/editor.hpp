@@ -81,6 +81,7 @@ private:
     void draw_sidebar(int my, int mx);
     void draw_line(int row, int buf_idx, int max_x, int sidebar_w, Tab& tab);
     void draw_status(int my, int mx);
+    void place_cursor(int my, int mx, Tab& tab);
     std::string prompt(const std::string& msg);
     void compile_run(Tab& tab);
     void update_sidebar();
