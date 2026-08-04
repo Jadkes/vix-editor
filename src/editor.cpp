@@ -115,7 +115,7 @@ Editor::Editor(int argc, char** argv)
         new_tab();
     }
     update_sidebar();
-    set_status(std::string(VIX_NAME) + " " + VIX_VERSION + " — ^H for help");
+    set_status(std::string(VIX_NAME) + " " + VIX_VERSION + " - ^H for help");
 }
 
 Editor::~Editor() {}
@@ -612,7 +612,7 @@ void Editor::draw_sidebar(int my, int mx) {
         else if (ex == ".md" || ex == ".txt") c = CP_LINENUM;
 
         std::string icon;
-        if (n == "..") { icon = "\xE2\x86\xA2"; c = CP_KEYWORD; }
+        if (n == "..") { icon = "<"; c = CP_KEYWORD; }
         else if (is_dir(sidebar_paths[idx])) icon = ">";
         else if (ex == ".cpp" || ex == ".hpp") icon = "C";
         else if (ex == ".c") icon = "c";
