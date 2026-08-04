@@ -6,18 +6,18 @@ Vix is a C++ terminal text editor with a tabbed buffer, a file-explorer sidebar,
 
 ---
 
-## Release 1.0.0
+## Release 1.0.2
 
-Latest release: **[1.0.0](https://github.com/Jadkeskes/vix-editor/releases/tag/1.0)** — prebuilt **x86_64 Linux** binary.
+Latest release: **[1.0.2](https://github.com/Jadkes/vix-editor/releases/tag/1.0.2)** — prebuilt **x86_64 Linux** binary.
 
 ### Install the binary (no build required)
 
 ```bash
-curl -L -o vix-1.0.0-linux-x86_64.tar.gz \
-  https://github.com/Jadkeskes/vix-editor/releases/download/1.0/vix-1.0.0-linux-x86_64.tar.gz
-tar xzf vix-1.0.0-linux-x86_64.tar.gz
-sudo install -m755 vix-1.0.0-linux-x86_64/vix /usr/local/bin/
-vix --version   # → vix 1.0.0
+curl -L -o vix-1.0.2-linux-x86_64.tar.gz \
+  https://github.com/Jadkes/vix-editor/releases/download/1.0.2/vix-1.0.2-linux-x86_64.tar.gz
+tar xzf vix-1.0.2-linux-x86_64.tar.gz
+sudo install -m755 vix-1.0.2-linux-x86_64/vix /usr/local/bin/
+vix --version   # → vix 1.0.2
 ```
 
 ---
@@ -27,7 +27,7 @@ vix --version   # → vix 1.0.0
 - C++20 compiler (GCC or Clang)
 - CMake ≥ 3.20
 - Ninja
-- ncurses
+- ncursesw (wide-char ncurses; plain ncurses is used as a fallback)
 
 ## Build
 
@@ -61,6 +61,7 @@ Then run `vix` from anywhere. Open a file with `vix file.cpp` or start blank wit
 | **`Ctrl + F`** | Live search |
 | **`F3`** / **`Shift+F3`** | Next / previous match |
 | **`Ctrl + D`** | Find & replace all |
+| **`Ctrl + P`** | Fuzzy file finder (type `mcp` to find `main.cpp`) |
 | **`Ctrl + G`** | Go to line |
 | **`Ctrl + Z`** / **`Ctrl + Y`** | Undo / redo |
 | **`Ctrl + N`** | New tab |
