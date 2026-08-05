@@ -55,6 +55,28 @@ cmake --preset debug        # Debug build into build-debug/
 cmake --build --preset debug
 ```
 
+## Tests
+
+`ctest` is the single entry point for the whole suite. Build first, then run:
+
+```bash
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+The suite has three test groups:
+
+- **BufferTest** — line editing, bounds checks, and byte-for-byte save round-trips
+  (LF, CRLF, no trailing newline)
+- **HistoryTest** — undo/redo, redo invalidation, bounded stack trimming
+- **PtySmoke** — drives the real `vix` binary through a pty: open/edit/save,
+  the `^H` help window, the unsaved-changes prompt, CRLF preservation, and
+  save-as on untitled buffers
+
+Unit tests compile only the core sources (no ncurses dependency); the pty test
+needs `python3`. Disable tests with `-DBUILD_TESTING=OFF` if you don't want the
+GoogleTest dependency at configure time.
+
 ## Install
 
 ```bash

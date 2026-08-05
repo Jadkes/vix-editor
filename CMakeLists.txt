@@ -88,3 +88,10 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS vix RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Tests: unit (GoogleTest) and end-to-end pty smoke tests. Disable with
+# -DBUILD_TESTING=OFF to keep the release build free of the gtest dependency.
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
