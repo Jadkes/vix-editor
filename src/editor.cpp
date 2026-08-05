@@ -158,7 +158,6 @@ void Editor::new_tab(const std::string& fname) {
     } else {
         static const char* exts[] = {".txt", ".cpp", ".py", ".js", ".rs", ".go", ".c"};
         int lang = std::clamp(settings.default_language, 0, 6);
-        tab->buffer.PushBack("");
         tab->buffer.SetFilename("Untitled" + std::string(exts[lang]));
     }
     detect_language(*tab);
