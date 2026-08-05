@@ -38,6 +38,9 @@ namespace fs = std::filesystem;
 #define CP_SELECT  11
 #define CP_MATCH   12
 #define CP_SEARCH  13
+#define CP_DIR     14
+#define CP_TAR     15
+#define CP_JSON    16
 
 // Width of the line-number gutter when enabled: 3 digit columns + 1 space.
 static constexpr int LINENUM_WIDTH = 4;
@@ -118,6 +121,17 @@ private:
     std::chrono::steady_clock::time_point msg_time, last_save_time;
 
     static constexpr int SIDEBAR_WIDTH = 22;
+    static constexpr int SIDEBAR_LABEL_W = 18;
+    static constexpr int SIDEBAR_LABEL_MAX = SIDEBAR_LABEL_W - 2;
     static constexpr int PROMPT_SIZE = 256;
     static constexpr int STATUS_TIMEOUT = 3;
+
+    static constexpr int HELP_H = 17;
+    static constexpr int HELP_W = 56;
+    static constexpr int HELP_X = 2;
+    static constexpr int HELP_COL_W = 24;
+    static constexpr int HELP_DIV_R = 2;
+    static constexpr int HELP_DIV_X = HELP_X + HELP_COL_W + 1;
+    static constexpr int HELP_FOOTER_R = HELP_H - 2;
+    static constexpr int HELP_DIV_H = HELP_FOOTER_R - 3;
 };

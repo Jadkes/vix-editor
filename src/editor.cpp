@@ -613,32 +613,42 @@ void Editor::draw_sidebar(int my, int mx) {
         int idx = i + sidebar_scroll;
         if (idx >= (int)sidebar_paths.size()) break;
         bool sel = (focus_sidebar && idx == sidebar_sel);
-        if (sel) attron(COLOR_PAIR(CP_SELECT));
 
         std::string n = sidebar_paths[idx].filename().string();
         if (n.empty()) n = "..";
+        std::string nl = n;
+        for (auto& cc : nl) cc = std::tolower((unsigned char)cc);
         std::string ex = sidebar_paths[idx].extension().string();
         for (auto& ec : ex) ec = std::tolower((unsigned char)ec);
+        bool is_dir_entry = is_dir(sidebar_paths[idx]) || n == "..";
+        bool is_arch = nl.ends_with(".tar") || nl.ends_with(".tar.gz") || nl.ends_with(".tar.xz") ||
+                       nl.ends_with(".tar.bz2") || nl.ends_with(".tgz") || nl.ends_with(".txz") ||
+                       nl.ends_with(".zip") || nl.ends_with(".gz") || nl.ends_with(".xz") ||
+                       nl.ends_with(".bz2") || nl.ends_with(".7z") || nl.ends_with(".rar");
         int c = CP_DEFAULT;
-        if (ex == ".py") c = CP_CYAN;
+        if (is_arch) c = CP_TAR;
+        else if (ex == ".py") c = CP_CYAN;
         else if (ex == ".cpp" || ex == ".cc" || ex == ".cxx") c = CP_KEYWORD;
         else if (ex == ".hpp" || ex == ".h" || ex == ".hh") c = CP_KEYWORD;
         else if (ex == ".c") c = CP_ORANGE;
-        else if (ex == ".js" || ex == ".jsx" || ex == ".mjs") c = CP_STRING;
+        else if (ex == ".js" || ex == ".jsx" || ex == ".mjs") c = CP_JSON;
+        else if (ex == ".ts" || ex == ".tsx") c = CP_KEYWORD;
         else if (ex == ".rs") c = CP_ORANGE;
         else if (ex == ".go") c = CP_CYAN;
-        else if (ex == ".json" || ex == ".yaml" || ex == ".yml") c = CP_STRING;
+        else if (ex == ".json") c = CP_JSON;
+        else if (ex == ".yaml" || ex == ".yml") c = CP_STRING;
         else if (ex == ".html" || ex == ".css") c = CP_ORANGE;
         else if (ex == ".sh" || ex == ".bash") c = CP_COMMENT;
         else if (ex == ".md" || ex == ".txt") c = CP_LINENUM;
 
         std::string icon;
-        if (n == "..") { icon = "<"; c = CP_KEYWORD; }
+        if (n == "..") { icon = "<"; c = CP_DIR; }
         else if (is_dir(sidebar_paths[idx])) icon = ">";
         else if (ex == ".cpp" || ex == ".hpp") icon = "C";
         else if (ex == ".c") icon = "c";
         else if (ex == ".py") icon = "P";
         else if (ex == ".js" || ex == ".jsx" || ex == ".mjs") icon = "J";
+        else if (ex == ".ts" || ex == ".tsx") icon = "T";
         else if (ex == ".rs") icon = "R";
         else if (ex == ".go") icon = "G";
         else if (ex == ".html") icon = "H";
@@ -650,22 +660,24 @@ void Editor::draw_sidebar(int my, int mx) {
         else if (ex == ".yaml" || ex == ".yml") icon = "Y";
         else icon = ".";
 
-        if (is_dir(sidebar_paths[idx]) || n == "..") {
-            attron(A_BOLD | COLOR_PAIR(CP_KEYWORD));
+        std::string label = icon + " " + n;
+        if (label.length() > SIDEBAR_LABEL_W) label = label.substr(0, SIDEBAR_LABEL_MAX) + "..";
+
+        if (sel) {
+            attron(COLOR_PAIR(CP_SELECT));
+        } else if (is_dir_entry) {
+            attron(A_BOLD | COLOR_PAIR(CP_DIR));
         } else {
             attron(COLOR_PAIR(c));
         }
-
-        std::string label = icon + " " + n;
-        if (label.length() > 18) label = label.substr(0, 16) + "..";
-        mvprintw(i + 2, 1, " %-18s", label.c_str());
-
-        if (is_dir(sidebar_paths[idx]) || n == "..") {
-            attroff(A_BOLD | COLOR_PAIR(CP_KEYWORD));
+        mvprintw(i + 2, 1, " %-*s", SIDEBAR_LABEL_W, label.c_str());
+        if (sel) {
+            attroff(COLOR_PAIR(CP_SELECT));
+        } else if (is_dir_entry) {
+            attroff(A_BOLD | COLOR_PAIR(CP_DIR));
         } else {
             attroff(COLOR_PAIR(c));
         }
-        if (sel) attroff(COLOR_PAIR(CP_SELECT));
     }
     attroff(COLOR_PAIR(CP_SIDEBAR));
 }
@@ -1126,18 +1138,39 @@ void Editor::run() {
         else if (ch == CTRL('h')) {
             int myw, mxw;
             getmaxyx(stdscr, myw, mxw);
-            WINDOW* hw = newwin(12, 50, (myw - 12) / 2, (mxw - 50) / 2);
+            int wy = (myw - HELP_H) / 2, wx = (mxw - HELP_W) / 2;
+            if (wy < 0) wy = 0;
+            if (wx < 0) wx = 0;
+            WINDOW* hw = newwin(HELP_H, HELP_W, wy, wx);
             if (hw) {
+                auto row = [&](int r, const char* left, const char* right) {
+                    mvwprintw(hw, r, HELP_X, "%-*s  %s", HELP_COL_W, left, right);
+                };
+                auto head = [&](int r, const char* left, const char* right) {
+                    wattron(hw, A_BOLD);
+                    mvwprintw(hw, r, HELP_X, "%-*s  %s", HELP_COL_W, left, right);
+                    wattroff(hw, A_BOLD);
+                };
+
                 box(hw, 0, 0);
-                mvwprintw(hw, 0, 2, " %s %s - VIX HELP ", VIX_NAME, VIX_VERSION);
-                mvwprintw(hw, 2, 2, "^S: Save   ^Q: Quit   ^R: Run   F2: Settings");
-                mvwprintw(hw, 3, 2, "^K: Kill   ^C: Copy   ^V: Paste   ^P: Find");
-                mvwprintw(hw, 4, 2, "^F: Search F3: Next  S+F3: Prev");
-                mvwprintw(hw, 5, 2, "Search: ^R Regex  ^C Case  ^W Word");
-                mvwprintw(hw, 6, 2, "^D: Replace  ^G: Go To Line");
-                mvwprintw(hw, 7, 2, "^Z: Undo  ^Y: Redo  ^N: New Tab");
-                mvwprintw(hw, 8, 2, "Tab: F5 Next  S+Tab Prev  ^\\ Close");
-                mvwprintw(hw, 9, 2, "Sidebar: 'a' New  'd' Delete  ^W Focus");
+                mvwprintw(hw, 0, HELP_X, " %s %s - VIX HELP ", VIX_NAME, VIX_VERSION);
+                mvwaddch(hw, 1, 0, ACS_LTEE);
+                mvwhline(hw, 1, 1, ACS_HLINE, HELP_W - 2);
+                mvwaddch(hw, 1, HELP_W - 1, ACS_RTEE);
+
+                head(2,  " FILES",             " NAVIGATION");
+                row(3,   "  ^S Save",          "  ^G Go To Line");
+                row(4,   "  ^Q Quit",          "  ^P Find File");
+                row(5,   "  ^N New Tab",       "  ^D Find & Replace");
+                row(6,   "  ^\\ Close Tab",    "  F3 Next   S-F3 Prev");
+                row(7,   "  F5 / S-Tab Switch","  ^H Help");
+                head(9,  " EDIT",              " COMPILE / MISC");
+                row(10,  "  ^Z Undo  ^Y Redo", "  ^R Compile & Run");
+                row(11,  "  ^K Cut Line",      "  F2 Settings");
+                row(12,  "  ^C Copy Line",     "  ^T Sidebar  ^W Focus");
+                row(13,  "  ^V Paste Line",    "  'a' New   'd' Delete");
+                mvwvline(hw, HELP_DIV_R, HELP_DIV_X, ACS_VLINE, HELP_DIV_H);
+                mvwprintw(hw, HELP_FOOTER_R, HELP_X, " Search: ^F  |  flags: ^R regex  ^C case  ^W word");
                 wrefresh(hw);
                 wgetch(hw);
                 delwin(hw);
