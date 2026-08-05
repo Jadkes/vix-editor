@@ -104,3 +104,43 @@ TEST(HistoryTest, DescriptionIsPopulated) {
     DeleteCommand dcmd(nullptr, "abc", 0, 0);
     EXPECT_EQ(dcmd.description(), "Delete: abc");
 }
+
+TEST(HistoryTest, PasteCommandSplicesMultiLine) {
+    History hist;
+    Buffer buf;
+    buf[0] = "hello";
+    hist.execute(std::make_unique<PasteCommand>(&buf, "foo\nbar", 0, 2));
+    ASSERT_EQ(buf.GetLineCount(), 2);
+    EXPECT_EQ(buf[0], "hefoo");
+    EXPECT_EQ(buf[1], "barllo");
+    hist.undo();
+    ASSERT_EQ(buf.GetLineCount(), 1);
+    EXPECT_EQ(buf[0], "hello");
+    hist.redo();
+    ASSERT_EQ(buf.GetLineCount(), 2);
+    EXPECT_EQ(buf[0], "hefoo");
+    EXPECT_EQ(buf[1], "barllo");
+}
+
+TEST(HistoryTest, PasteCommandSingleLineBehavesLikeInsert) {
+    History hist;
+    Buffer buf;
+    buf[0] = "abcdef";
+    hist.execute(std::make_unique<PasteCommand>(&buf, "XY", 0, 2));
+    EXPECT_EQ(buf[0], "abXYcdef");
+    hist.undo();
+    EXPECT_EQ(buf[0], "abcdef");
+}
+
+TEST(HistoryTest, PasteCommandWithTrailingNewline) {
+    History hist;
+    Buffer buf;
+    buf[0] = "one";
+    hist.execute(std::make_unique<PasteCommand>(&buf, "two\n", 0, 3));
+    ASSERT_EQ(buf.GetLineCount(), 2);
+    EXPECT_EQ(buf[0], "onetwo");
+    EXPECT_EQ(buf[1], "");
+    hist.undo();
+    ASSERT_EQ(buf.GetLineCount(), 1);
+    EXPECT_EQ(buf[0], "one");
+}

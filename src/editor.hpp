@@ -21,7 +21,7 @@
 namespace fs = std::filesystem;
 
 #ifndef VIX_VERSION
-#define VIX_VERSION "1.0.3"
+#define VIX_VERSION "1.0.4"
 #endif
 #define VIX_NAME "vix"
 
@@ -57,10 +57,11 @@ struct Tab {
     int x, y;
     int v_scroll;
     int h_scroll;
+    int v_seg;  // wrap: segment offset within v_scroll's line at the viewport top
     SyntaxRules rules;
     std::string clipboard;
     bool in_block_comment;
-    Tab() : x(0), y(0), v_scroll(0), h_scroll(0), in_block_comment(false) {}
+    Tab() : x(0), y(0), v_scroll(0), h_scroll(0), v_seg(0), in_block_comment(false) {}
 };
 
 struct SearchHit {
@@ -82,7 +83,8 @@ private:
     void draw();
     void draw_tab_bar(int mx);
     void draw_sidebar(int my, int mx);
-    void draw_line(int row, int buf_idx, int max_x, int sidebar_w, Tab& tab);
+    void draw_line(int row, int buf_idx, int max_x, int sidebar_w, Tab& tab,
+                   int start_col = 0, int end_col = -1);
     void draw_status(int my, int mx);
     void place_cursor(int my, int mx, Tab& tab);
     std::string prompt(const std::string& msg);
@@ -94,11 +96,16 @@ private:
     void plain_search(const std::string& line, int line_idx, const std::string& q);
     void search_next(Tab& tab);
     void search_prev(Tab& tab);
+    void replace_current(Tab& tab);
     void clear_search(Tab& tab);
     void new_tab(const std::string& fname = "");
     void close_tab(int idx);
     void switch_tab(int idx);
     void fuzzy_finder();
+    int wrap_rows(int buf_idx, int text_w, Tab& tab) const;
+    int wrap_col(int buf_idx, int seg, int text_w, Tab& tab) const;
+    void save_session();
+    void load_session();
 
     void set_status(const std::string& msg);
     void clamp_cursor(Tab& tab);

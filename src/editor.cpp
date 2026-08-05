@@ -52,8 +52,75 @@ static bool iequal(char a, char b) {
     return std::tolower((unsigned char)a) == std::tolower((unsigned char)b);
 }
 
+// System clipboard bridge. Writes/pastes via wl-copy/wl-paste on Wayland,
+// xclip/xsel-style tools on X11; anything not on PATH is silently ignored so
+// the editor keeps working with only its internal clipboard. Detection runs
+// once (popen, not system(), so the raw terminal is never handed to a shell).
+static bool clip_tool_available = false;
+static bool clip_tool_checked = false;
+
+static bool have_clipboard_tool() {
+    if (clip_tool_checked) return clip_tool_available;
+    clip_tool_checked = true;
+    const char* cmd = getenv("WAYLAND_DISPLAY")
+        ? "command -v wl-copy && command -v wl-paste"
+        : "command -v xclip || command -v xsel";
+    FILE* p = popen(cmd, "r");
+    if (!p) return false;
+    char buf[32];
+    bool ok = fread(buf, 1, sizeof buf, p) > 0;
+    pclose(p);
+    clip_tool_available = ok;
+    return ok;
+}
+
+static void system_copy(const std::string& text) {
+    if (!have_clipboard_tool() || text.empty()) return;
+    const char* cmd = getenv("WAYLAND_DISPLAY") ? "wl-copy" : "xclip -selection clipboard";
+    FILE* p = popen(cmd, "w");
+    if (!p) return;
+    fwrite(text.data(), 1, text.size(), p);
+    pclose(p);
+}
+
+static std::string system_paste() {
+    if (!have_clipboard_tool()) return "";
+    const char* cmd = getenv("WAYLAND_DISPLAY") ? "wl-paste" : "xclip -o -selection clipboard";
+    FILE* p = popen(cmd, "r");
+    if (!p) return "";
+    std::string out;
+    char buf[4096];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, p)) > 0) out.append(buf, n);
+    pclose(p);
+    return out;
+}
+
 static bool is_word_char(char c) {
     return std::isalnum((unsigned char)c) || c == '_';
+}
+
+// Word-aware wrap: given a line and a wrap width, return the column where each
+// visual segment starts (first entry is always 0). Each segment is at most
+// `text_w` columns, preferring to break after a space so words stay whole.
+static std::vector<int> wrap_starts(const std::string& line, int text_w) {
+    std::vector<int> starts;
+    int len = (int)line.length();
+    if (text_w < 1) text_w = 1;
+    starts.push_back(0);
+    int pos = 0;
+    while (len - pos > text_w) {
+        int end = pos + text_w;
+        size_t sp_raw = line.rfind(' ', end - 1);
+        if (sp_raw != std::string::npos) {
+            int sp = (int)sp_raw;
+            if (sp >= pos) end = sp + 1;
+        }
+        if (end <= pos) end = pos + 1;
+        starts.push_back(end);
+        pos = end;
+    }
+    return starts;
 }
 
 /* Filename extension -> lowercased string (no dot). */
@@ -112,6 +179,94 @@ static size_t ifind(const std::string& hay, const std::string& needle, size_t po
     return std::string::npos;
 }
 
+void Editor::save_session() {
+    std::string dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.config/vix";
+    try { fs::create_directories(dir); } catch (...) { return; }
+    std::ofstream f(fs::path(dir) / "session.json");
+    if (!f.is_open()) return;
+    f << "{\n";
+    f << "    \"current_dir\": \"" << current_dir << "\",\n";
+    f << "    \"current_tab\": " << current_tab << ",\n";
+    f << "    \"files\": [\n";
+    for (size_t i = 0; i < tabs.size(); i++) {
+        f << "        \"" << tabs[i]->buffer.GetFilename() << "\"";
+        if (i + 1 < tabs.size()) f << ",";
+        f << "\n";
+    }
+    f << "    ]\n";
+    f << "}\n";
+}
+
+void Editor::load_session() {
+    std::string dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.config/vix";
+    std::ifstream f(fs::path(dir) / "session.json");
+    if (!f.is_open()) return;
+    std::ostringstream buf; buf << f.rdbuf();
+    std::string text = buf.str();
+    size_t start = text.find('{'), end = text.rfind('}');
+    if (start == std::string::npos || end == std::string::npos || end <= start) return;
+    start++; size_t i = start;
+
+    std::string saved_dir;
+    std::vector<std::string> files;
+    int saved_tab = 0;
+    bool have_dir = false;
+
+    // Tiny hand-rolled scan: pull current_dir, current_tab, and each file name.
+    auto skip_ws = [&]() { while (i < end && (text[i]==' '||text[i]=='\t'||text[i]=='\n'||text[i]=='\r')) i++; };
+    auto read_str = [&]() {
+        std::string val;
+        while (i < end && text[i] != '"') { if (text[i]=='\\' && i+1<end) i++; val += text[i]; i++; }
+        if (i < end) i++;
+        return val;
+    };
+    while (i < end) {
+        skip_ws();
+        if (i >= end || text[i] != '"') { i++; continue; }
+        i++;
+        std::string key = read_str();
+        skip_ws();
+        if (i >= end || text[i] != ':') continue;
+        i++;
+        skip_ws();
+        if (key == "current_dir" && i < end && text[i] == '"') { i++; saved_dir = read_str(); have_dir = true; }
+        else if (key == "current_tab") {
+            std::string val;
+            while (i < end && text[i] != ',' && text[i] != '}' && text[i] != ' ' && text[i] != '\n' && text[i] != '\r') val += text[i++];
+            try { saved_tab = std::stoi(val); } catch (...) {}
+        }
+        else if (key == "files") {
+            if (i < end && text[i] == '[') i++;
+            while (i < end) {
+                skip_ws();
+                if (i >= end || text[i] != '"') { if (text[i] == ']') i++; break; }
+                i++;
+                files.push_back(read_str());
+                skip_ws();
+                if (i < end && text[i] == ',') i++;
+            }
+        }
+        skip_ws();
+        if (i < end && text[i] == ',') i++;
+    }
+
+    if (have_dir && fs::is_directory(saved_dir)) {
+        current_dir = saved_dir;
+        update_sidebar();
+    }
+
+    tabs.clear();
+    current_tab = 0;
+    for (const auto& path : files) {
+        std::error_code ec;
+        if (!path.empty() && fs::is_regular_file(path, ec)) new_tab(path);
+    }
+    if (tabs.empty()) new_tab();
+    current_tab = std::clamp(saved_tab, 0, (int)tabs.size() - 1);
+    detect_language(*tabs[current_tab]);
+    clear_search(*tabs[current_tab]);
+}
+
 Editor::Editor(int argc, char** argv)
     : current_tab(0), running(true),
       show_sidebar(true), focus_sidebar(false),
@@ -123,8 +278,18 @@ Editor::Editor(int argc, char** argv)
     last_save_time = std::chrono::steady_clock::now();
     LoadSettings(settings);
 
-    if (argc > 1) {
-        new_tab(argv[1]);
+    bool resume = false;
+    std::string open_file;
+    for (int i = 1; i < argc; i++) {
+        std::string a = argv[i];
+        if (a == "--resume" || a == "-r") resume = true;
+        else if (open_file.empty()) open_file = a;
+    }
+
+    if (resume) {
+        load_session();
+    } else if (!open_file.empty()) {
+        new_tab(open_file);
     } else {
         new_tab();
     }
@@ -460,6 +625,33 @@ void Editor::search_prev(Tab& tab) {
     tab.x = search_results[search_idx].col;
 }
 
+// Replace only the currently highlighted match (search_idx) via the history
+// commands, then re-run the search so results stay in sync.
+void Editor::replace_current(Tab& tab) {
+    if (search_results.empty() || search_idx < 0 || search_idx >= (int)search_results.size()) {
+        set_status("No match to replace");
+        return;
+    }
+    std::string r = prompt("Replace with: ");
+    if (r.empty()) return;
+    auto hit = search_results[search_idx];
+    if (hit.line < 0 || hit.line >= tab.buffer.GetLineCount()) return;
+    std::string& line = tab.buffer[hit.line];
+    if (hit.col < 0 || hit.col + hit.len > (int)line.length()) return;
+
+    auto del = std::make_unique<DeleteCommand>(&tab.buffer, line.substr(hit.col, hit.len), hit.line, hit.col);
+    tab.history.execute(std::move(del));
+    auto ins = std::make_unique<InsertCommand>(&tab.buffer, r, hit.line, hit.col);
+    tab.history.execute(std::move(ins));
+
+    tab.y = hit.line;
+    tab.x = hit.col + (int)r.length();
+    find_all(tab, search_query);
+    if (tab.y >= tab.buffer.GetLineCount()) tab.y = tab.buffer.GetLineCount() - 1;
+    if (tab.x > (int)tab.buffer[tab.y].length()) tab.x = (int)tab.buffer[tab.y].length();
+    set_status("Replaced match " + std::to_string(search_idx + 1));
+}
+
 void Editor::clear_search(Tab&) {
     search_results.clear();
     search_query.clear();
@@ -681,16 +873,17 @@ void Editor::draw_sidebar(int my, int mx) {
     attroff(COLOR_PAIR(CP_SIDEBAR));
 }
 
-void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
+void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int start_col, int end_col) {
     auto& line = tab.buffer[buf_idx];
+    if (end_col < 0 || end_col > (int)line.length()) end_col = (int)line.length();
     if (settings.line_numbers) {
         attron(COLOR_PAIR(CP_LINENUM));
         mvprintw(row, sw, "%3d ", buf_idx + 1);
         attroff(COLOR_PAIR(CP_LINENUM));
     }
     int cur_x = sw + (settings.line_numbers ? LINENUM_WIDTH : 0);
-    int i = tab.h_scroll;
-    while (i < (int)line.length() && cur_x < max_x) {
+    int i = start_col;
+    while (i < end_col && cur_x < max_x) {
         bool is_search_start = false;
         int search_hit_len = 0;
         int search_hit_idx = -1;
@@ -708,12 +901,12 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
         if (is_search_start) {
             int cp = (search_hit_idx == search_idx) ? CP_MATCH : CP_SEARCH;
             attron(COLOR_PAIR(cp));
-            for (int j = 0; j < search_hit_len && cur_x < max_x; j++) {
+            for (int j = 0; j < search_hit_len && i + j < end_col && cur_x < max_x; j++) {
                 addch(line[i + j]); cur_x++;
             }
-            i += search_hit_len - 1;
+            i += search_hit_len;
             attroff(COLOR_PAIR(cp));
-            i++; continue;
+            continue;
         }
 
         bool is_match = (match_pos.active && match_pos.y == buf_idx && match_pos.x == i);
@@ -725,7 +918,7 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
         if (c == '"' || c == '\'') {
             attron(COLOR_PAIR(CP_STRING));
             addch(c); cur_x++; i++;
-            while (i < (int)line.length() && cur_x < max_x) {
+            while (i < end_col && cur_x < max_x) {
                 addch(line[i]); cur_x++;
                 if (line[i] == c && (i == 0 || line[i-1] != '\\')) break;
                 i++;
@@ -734,7 +927,7 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
             attroff(COLOR_PAIR(CP_STRING));
         } else if (is_c_cpp && tab.in_block_comment) {
             attron(COLOR_PAIR(CP_COMMENT));
-            while (i < (int)line.length() && cur_x < max_x) {
+            while (i < end_col && cur_x < max_x) {
                 if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
                     addch(line[i]); cur_x++; i++;
                     addch(line[i]); cur_x++; i++;
@@ -746,14 +939,14 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '/' && i+1 < (int)line.length() && line[i+1] == '/') {
             attron(COLOR_PAIR(CP_COMMENT));
-            while (i < (int)line.length() && cur_x < max_x) { addch(line[i]); cur_x++; i++; }
+            while (i < end_col && cur_x < max_x) { addch(line[i]); cur_x++; i++; }
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '/' && i+1 < (int)line.length() && line[i+1] == '*') {
             attron(COLOR_PAIR(CP_COMMENT));
             addch(line[i]); cur_x++; i++;
             addch(line[i]); cur_x++; i++;
             bool closed = false;
-            while (i < (int)line.length() && cur_x < max_x) {
+            while (i < end_col && cur_x < max_x) {
                 addch(line[i]); cur_x++;
                 if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
                     i++;
@@ -767,7 +960,7 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t')) {
             attron(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
-            while (i < (int)line.length() && cur_x < max_x) { addch(line[i]); cur_x++; i++; }
+            while (i < end_col && cur_x < max_x) { addch(line[i]); cur_x++; i++; }
             attroff(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
         } else if (std::isdigit((unsigned char)c)) {
             attron(COLOR_PAIR(CP_ORANGE));
@@ -775,11 +968,11 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab) {
             attroff(COLOR_PAIR(CP_ORANGE));
         } else if (std::isalpha((unsigned char)c) || c == '_') {
             std::string w;
-            while (i < (int)line.length() && (std::isalnum((unsigned char)line[i]) || line[i] == '_')) w += line[i++];
+            while (i < end_col && (std::isalnum((unsigned char)line[i]) || line[i] == '_')) w += line[i++];
             bool is_kw = false;
             for (auto& k : tab.rules.keywords) if (k == w) { is_kw = true; break; }
             if (is_kw) attron(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
-            else if (i < (int)line.length() && line[i] == '(') attron(COLOR_PAIR(CP_CYAN));
+            else if (i < end_col && line[i] == '(') attron(COLOR_PAIR(CP_CYAN));
             for (char cc : w) { if (cur_x < max_x) { addch(cc); cur_x++; } }
             attroff(COLOR_PAIR(CP_KEYWORD) | A_BOLD | COLOR_PAIR(CP_CYAN));
         } else {
@@ -834,15 +1027,53 @@ void Editor::draw() {
     if (show_sidebar) draw_sidebar(my, mx);
 
     tab.in_block_comment = false;
-    for (int i = 1; i < my - 1; i++) {
-        int idx = (i - 1) + tab.v_scroll;
-        if (idx < tab.buffer.GetLineCount()) draw_line(i, idx, mx, sw, tab);
+    if (settings.word_wrap) {
+        int text_w = mx - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
+        if (text_w < 1) text_w = 1;
+        int row = 1;
+        int line_idx = tab.v_scroll;
+        int first_seg = 0;
+        if (line_idx < tab.buffer.GetLineCount() && tab.v_seg > 0) {
+            first_seg = std::min(tab.v_seg, wrap_rows(line_idx, text_w, tab) - 1);
+        }
+        while (row < my - 1 && line_idx < tab.buffer.GetLineCount()) {
+            int segs = wrap_rows(line_idx, text_w, tab);
+            for (int s = first_seg; s < segs && row < my - 1; s++) {
+                int start = wrap_col(line_idx, s, text_w, tab);
+                int end = (s + 1 < segs) ? wrap_col(line_idx, s + 1, text_w, tab)
+                                         : (int)tab.buffer[line_idx].length();
+                draw_line(row, line_idx, mx, sw, tab, start, end);
+                row++;
+            }
+            first_seg = 0;
+            line_idx++;
+        }
+    } else {
+        for (int i = 1; i < my - 1; i++) {
+            int idx = (i - 1) + tab.v_scroll;
+            if (idx < tab.buffer.GetLineCount()) draw_line(i, idx, mx, sw, tab);
+        }
     }
 
     draw_status(my, mx);
 
     place_cursor(my, mx, tab);
     refresh();
+}
+
+int Editor::wrap_rows(int buf_idx, int text_w, Tab& tab) const {
+    if (!settings.word_wrap) return 1;
+    if (buf_idx < 0 || buf_idx >= tab.buffer.GetLineCount()) return 1;
+    return (int)wrap_starts(tab.buffer[buf_idx], text_w).size();
+}
+
+int Editor::wrap_col(int buf_idx, int seg, int text_w, Tab& tab) const {
+    if (!settings.word_wrap) return 0;
+    if (buf_idx < 0 || buf_idx >= tab.buffer.GetLineCount()) return 0;
+    auto starts = wrap_starts(tab.buffer[buf_idx], text_w);
+    if (seg < 0) seg = 0;
+    if (seg >= (int)starts.size()) seg = (int)starts.size() - 1;
+    return starts[seg];
 }
 
 void Editor::place_cursor(int my, int mx, Tab& tab) {
@@ -857,6 +1088,18 @@ void Editor::place_cursor(int my, int mx, Tab& tab) {
         if (search_whole_word) flag_len += 3;
         int sx = std::clamp(7 + flag_len + (int)search_query.length(), 0, mx - 1);
         move(my - 1, sx);
+    } else if (settings.word_wrap) {
+        int text_w = mx - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
+        if (text_w < 1) text_w = 1;
+        int vis = 0;
+        for (int li = tab.v_scroll; li < tab.y; li++) vis += wrap_rows(li, text_w, tab);
+        auto starts = wrap_starts(tab.buffer[tab.y], text_w);
+        int seg = 0;
+        for (int s = 0; s < (int)starts.size(); s++) if (starts[s] <= tab.x) seg = s; else break;
+        vis += seg - tab.v_seg;
+        int cy = std::clamp(vis + 1, 1, my - 2);
+        int cx = std::clamp(tab.x - starts[seg] + sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
+        move(cy, cx);
     } else {
         int cy = std::clamp(tab.y - tab.v_scroll + 1, 1, my - 2);
         int cx = std::clamp(tab.x - tab.h_scroll + sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
@@ -905,15 +1148,48 @@ void Editor::run() {
         tab.y = std::clamp(tab.y, 0, std::max(0, tab.buffer.GetLineCount() - 1));
         tab.x = std::min(tab.x, std::max(0, (int)tab.buffer[tab.y].length()));
 
-        if (tab.y < tab.v_scroll) tab.v_scroll = tab.y;
-        if (tab.y >= tab.v_scroll + my - 2) tab.v_scroll = tab.y - (my - 2) + 1;
-
         int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
         int text_w = mx - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
         if (text_w < 1) text_w = 1;
-        if (tab.h_scroll < 0) tab.h_scroll = 0;
-        if (tab.x < tab.h_scroll) tab.h_scroll = tab.x;
-        if (tab.x >= tab.h_scroll + text_w) tab.h_scroll = tab.x - text_w + 1;
+
+        if (settings.word_wrap) {
+            // Horizontal scroll is meaningless under wrap: the line already
+            // fills the viewport, so force h_scroll off and keep the wrap
+            // segment offset of the top line in range.
+            tab.h_scroll = 0;
+            int top_rows = wrap_rows(tab.v_scroll, text_w, tab);
+            if (tab.v_seg >= top_rows) tab.v_seg = std::max(0, top_rows - 1);
+            if (tab.y < tab.v_scroll) { tab.v_scroll = tab.y; tab.v_seg = 0; }
+            int cursor_row = 0;
+            for (int li = tab.v_scroll; li < tab.y; li++) cursor_row += wrap_rows(li, text_w, tab);
+            cursor_row -= tab.v_seg;
+            int row_in_line = 0;
+            auto starts = wrap_starts(tab.buffer[tab.y], text_w);
+            for (int s = 0; s < (int)starts.size(); s++) if (starts[s] <= tab.x) row_in_line = s; else break;
+            cursor_row += row_in_line;
+            if (cursor_row < 0) { tab.v_scroll = tab.y; tab.v_seg = 0; }
+            else if (cursor_row >= my - 2) {
+                // Advance the top line until the cursor row fits on screen.
+                while (cursor_row >= my - 2 && tab.v_scroll < tab.y) {
+                    cursor_row -= wrap_rows(tab.v_scroll, text_w, tab);
+                    tab.v_scroll++;
+                    tab.v_seg = 0;
+                }
+                if (cursor_row >= my - 2) {
+                    // A single line taller than the viewport: scroll inside it.
+                    int overflow = cursor_row - (my - 3);
+                    tab.v_seg += overflow;
+                    int rows = wrap_rows(tab.y, text_w, tab);
+                    tab.v_seg = std::min(tab.v_seg, rows - 1);
+                }
+            }
+        } else {
+            if (tab.y < tab.v_scroll) tab.v_scroll = tab.y;
+            if (tab.y >= tab.v_scroll + my - 2) tab.v_scroll = tab.y - (my - 2) + 1;
+            if (tab.h_scroll < 0) tab.h_scroll = 0;
+            if (tab.x < tab.h_scroll) tab.h_scroll = tab.x;
+            if (tab.x >= tab.h_scroll + text_w) tab.h_scroll = tab.x - text_w + 1;
+        }
 
         // Pure cursor moves repaint only the status row and cursor instead of
         // the whole viewport; anything that changes text, scroll, the sidebar
@@ -949,12 +1225,19 @@ void Editor::run() {
                 if (event.bstate & BUTTON4_PRESSED) {
                     if (show_sidebar && event.x < SIDEBAR_WIDTH) {
                         if (sidebar_sel > 0) sidebar_sel--;
+                    } else if (settings.word_wrap) {
+                        if (tab.v_seg > 0) tab.v_seg--;
+                        else if (tab.v_scroll > 0) { tab.v_scroll--; tab.v_seg = 0; }
                     } else {
                         if (tab.v_scroll > 0) tab.v_scroll--;
                     }
                 } else if (event.bstate & BUTTON5_PRESSED) {
                     if (show_sidebar && event.x < SIDEBAR_WIDTH) {
                         if (sidebar_sel < (int)sidebar_paths.size() - 1) sidebar_sel++;
+                    } else if (settings.word_wrap) {
+                        int top_rows = wrap_rows(tab.v_scroll, text_w, tab);
+                        if (tab.v_seg < top_rows - 1) tab.v_seg++;
+                        else if (tab.v_scroll < tab.buffer.GetLineCount() - 1) { tab.v_scroll++; tab.v_seg = 0; }
                     } else {
                         if (tab.v_scroll < tab.buffer.GetLineCount() - 1) tab.v_scroll++;
                     }
@@ -981,12 +1264,30 @@ void Editor::run() {
                         }
                     } else {
                         focus_sidebar = false;
-                        int clicked_y = event.y - 1 + tab.v_scroll;
-                        int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
-                        int clicked_x = event.x - sw - (settings.line_numbers ? LINENUM_WIDTH : 0) + tab.h_scroll;
-                        if (clicked_y >= 0 && clicked_y < tab.buffer.GetLineCount()) {
-                            tab.y = clicked_y;
-                            tab.x = std::max(0, std::min((int)tab.buffer[tab.y].length(), clicked_x));
+                        int clicked_y = event.y - 1;
+                        if (settings.word_wrap) {
+                            // Walk lines from the top of the viewport to the
+                            // clicked row, using the wrapped row counts.
+                            int vis = -tab.v_seg;
+                            int line_idx = tab.v_scroll;
+                            for (; line_idx < tab.buffer.GetLineCount(); line_idx++) {
+                                int rows = wrap_rows(line_idx, text_w, tab);
+                                if (clicked_y < vis + rows) break;
+                                vis += rows;
+                            }
+                            if (line_idx >= tab.buffer.GetLineCount()) line_idx = tab.buffer.GetLineCount() - 1;
+                            tab.y = line_idx;
+                            auto starts = wrap_starts(tab.buffer[tab.y], text_w);
+                            int col_in_line = std::clamp(clicked_y - vis, 0, (int)starts.size() - 1);
+                            tab.x = std::clamp(starts[col_in_line], 0, (int)tab.buffer[tab.y].length());
+                        } else {
+                            int line = clicked_y + tab.v_scroll;
+                            int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
+                            int clicked_x = event.x - sw - (settings.line_numbers ? LINENUM_WIDTH : 0) + tab.h_scroll;
+                            if (line >= 0 && line < tab.buffer.GetLineCount()) {
+                                tab.y = line;
+                                tab.x = std::max(0, std::min((int)tab.buffer[tab.y].length(), clicked_x));
+                            }
                         }
                     }
                 }
@@ -1019,6 +1320,9 @@ void Editor::run() {
             } else if (ch == CTRL('w')) {
                 search_whole_word = !search_whole_word;
                 if (!search_query.empty()) find_all(tab, search_query);
+            } else if (ch == CTRL('d')) {
+                if (search_results.empty()) { set_status("Nothing to replace"); }
+                else replace_current(tab);
             } else if (ch >= 32 && ch <= 126) {
                 search_query += (char)ch;
                 find_all(tab, search_query);
@@ -1036,6 +1340,7 @@ void Editor::run() {
                 std::string a = prompt("Unsaved changes. Save? (y/n): ");
                 if (a == "y" || a == "Y") save_file(tab);
             }
+            save_session();
             running = false;
         }
         else if (ch == CTRL('s')) { save_file(tab); redraw = true; }
@@ -1060,6 +1365,7 @@ void Editor::run() {
         else if (ch == CTRL('k')) {
             if (tab.y < tab.buffer.GetLineCount()) {
                 tab.clipboard = tab.buffer[tab.y];
+                system_copy(tab.clipboard);
                 auto cmd = std::make_unique<DeleteCommand>(&tab.buffer, tab.clipboard, tab.y, 0);
                 tab.history.execute(std::move(cmd));
                 tab.x = 0;
@@ -1069,16 +1375,25 @@ void Editor::run() {
         else if (ch == CTRL('c')) {
             if (tab.y < tab.buffer.GetLineCount()) {
                 tab.clipboard = tab.buffer[tab.y];
+                system_copy(tab.clipboard);
                 status_msg = "Copied";
                 msg_time = std::chrono::steady_clock::now();
             }
             redraw = true;
         }
         else if (ch == CTRL('v')) {
-            if (!tab.clipboard.empty()) {
-                auto cmd = std::make_unique<InsertCommand>(&tab.buffer, tab.clipboard, tab.y, tab.x);
-                tab.history.execute(std::move(cmd));
-                tab.x += (int)tab.clipboard.length();
+            std::string text = system_paste();
+            if (text.empty()) text = tab.clipboard;
+            if (!text.empty()) {
+                if (text.find('\n') != std::string::npos) {
+                    auto cmd = std::make_unique<PasteCommand>(&tab.buffer, text, tab.y, tab.x);
+                    tab.history.execute(std::move(cmd));
+                } else {
+                    auto cmd = std::make_unique<InsertCommand>(&tab.buffer, text, tab.y, tab.x);
+                    tab.history.execute(std::move(cmd));
+                    tab.x += (int)text.length();
+                }
+                tab.clipboard = text;
             }
             redraw = true;
         }
@@ -1167,8 +1482,9 @@ void Editor::run() {
                 row(10,  "  ^Z Undo  ^Y Redo", "  ^R Compile & Run");
                 row(11,  "  ^K Cut Line",      "  F2 Settings");
                 row(12,  "  ^C Copy Line",     "  ^T Sidebar  ^W Focus");
-                row(13,  "  ^V Paste Line",    "  'a' New   'd' Delete");
+                row(13,  "  ^V Paste (clipbd)","  'a' New   'd' Delete");
                 mvwvline(hw, HELP_DIV_R, HELP_DIV_X, ACS_VLINE, HELP_DIV_H);
+                mvwprintw(hw, HELP_FOOTER_R - 1, HELP_X, " In search: ^D replaces the highlighted match only");
                 mvwprintw(hw, HELP_FOOTER_R, HELP_X, " Search: ^F  |  flags: ^R regex  ^C case  ^W word");
                 wrefresh(hw);
                 wgetch(hw);

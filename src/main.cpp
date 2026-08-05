@@ -10,8 +10,9 @@ int main(int argc, char** argv) {
         }
         if (std::strcmp(argv[1], "--help") == 0 || std::strcmp(argv[1], "-h") == 0) {
             std::printf("usage: %s [file]\n\n"
-                        "  -v, --version  print version and exit\n"
-                        "  -h, --help     show this help and exit\n",
+                        "  -r, --resume    reopen the files from the last session\n"
+                        "  -v, --version   print version and exit\n"
+                        "  -h, --help      show this help and exit\n",
                         argv[0]);
             return 0;
         }

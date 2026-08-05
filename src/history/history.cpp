@@ -79,6 +79,54 @@ bool DeleteCommand::undo() {
 
 std::string DeleteCommand::description() const { return "Delete: " + text; }
 
+PasteCommand::PasteCommand(Buffer* buf, const std::string& text, int line, int col)
+    : buffer(buf), text(text), line(line), col(col), inserted_lines(0) {}
+
+bool PasteCommand::execute() {
+    if (!buffer) return false;
+    if (line < 0 || line >= buffer->GetLineCount()) return false;
+    if (col < 0) col = 0;
+    if (col > (int)buffer->operator[](line).length()) col = (int)buffer->operator[](line).length();
+
+    orig_line = buffer->operator[](line);
+    inserted_lines = 0;
+
+    // Split the pasted text into lines; the first piece lands at (line, col),
+    // each following piece becomes a new line, and the tail of the original
+    // line moves after the last piece so the paste is a true splice.
+    std::string tail = orig_line.substr(col);
+    buffer->operator[](line) = orig_line.substr(0, col);
+    int target_line = line;
+    size_t start = 0;
+    while (true) {
+        size_t nl = text.find('\n', start);
+        std::string piece = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        buffer->operator[](target_line) += piece;
+        if (nl == std::string::npos) break;
+        target_line++;
+        buffer->InsertLine(target_line, "");
+        inserted_lines++;
+        start = nl + 1;
+    }
+    buffer->operator[](target_line) += tail;
+    buffer->SetModified(true);
+    return true;
+}
+
+bool PasteCommand::undo() {
+    if (!buffer) return false;
+    if (line < 0 || line >= buffer->GetLineCount()) return false;
+
+    // Remove the extra lines the paste created, then restore the original line.
+    for (int i = 0; i < inserted_lines; i++) {
+        if (line + 1 < buffer->GetLineCount()) buffer->EraseLine(line + 1);
+    }
+    if (line < buffer->GetLineCount()) buffer->operator[](line) = orig_line;
+    return true;
+}
+
+std::string PasteCommand::description() const { return "Paste"; }
+
 NewLineCommand::NewLineCommand(Buffer* buf, int insert_before_line,
                                const std::string& first_half, const std::string& second_half,
                                const std::string& orig_full_line)

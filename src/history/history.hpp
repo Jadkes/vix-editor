@@ -63,6 +63,23 @@ private:
     int line, col;
 };
 
+// Paste text that may span multiple lines at (line, col). execute() splits
+// the text on '\n', splices the pieces into the buffer and keeps the tail of
+// the original line after the last piece; undo() reverses all of it.
+class PasteCommand : public Command {
+public:
+    PasteCommand(Buffer* buf, const std::string& text, int line, int col);
+    bool execute() override;
+    bool undo() override;
+    std::string description() const override;
+private:
+    Buffer* buffer;
+    std::string text;
+    int line, col;
+    std::string orig_line;  // full content of the line before the paste
+    int inserted_lines;     // how many extra lines execute() added
+};
+
 // Split the line above insert_before_line into first_half | second_half.
 // execute() and undo() both rewrite the line, so redo reproduces the split.
 class NewLineCommand : public Command {

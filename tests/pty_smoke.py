@@ -36,7 +36,10 @@ def spawn(vix, cwd, fname=None):
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(cwd)
-        argv = [vix] + ([fname] if fname else [])
+        if isinstance(fname, list):
+            argv = [vix] + fname
+        else:
+            argv = [vix] + ([fname] if fname else [])
         os.execv(vix, argv)
     # Give ncurses a real terminal geometry so it renders without wrapping.
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
@@ -238,6 +241,140 @@ def scenario_save_as(tmp):
         os.close(fd)
 
 
+def scenario_word_wrap(tmp):
+    """With word_wrap enabled, a long line renders on multiple screen rows."""
+    fpath = os.path.join(tmp, "wrapped.txt")
+    long_line = " ".join(["word%d" % i for i in range(20)])
+    with open(fpath, "w") as f:
+        f.write(long_line + "\n")
+
+    cfg = os.path.join(tmp, ".config", "vix")
+    os.makedirs(cfg, exist_ok=True)
+    with open(os.path.join(cfg, "settings.json"), "w") as f:
+        f.write('{\n    "word_wrap": true,\n    "line_numbers": false,\n}\n')
+
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = tmp
+    try:
+        pid, fd = spawn(sys.argv[1], tmp, fpath)
+        try:
+            time.sleep(0.4)
+            out = drain(fd, 0.4)
+            # text_w = COLS(100) - sidebar(22) = 78; the 20-word line is ~130
+            # chars so the wrap continuation must appear on a second row.
+            if b"word19" not in out:
+                return "wrapped tail (word19) missing from output"
+            first = long_line.split()[:12]
+            if any(w.encode() not in out for w in first):
+                return "first wrap segment missing"
+            status = clean_quit(fd, pid)
+            if exit_code(status) != 0:
+                return "exit code %r after wrap" % exit_code(status)
+            return None
+        finally:
+            os.close(fd)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
+def scenario_session_resume(tmp):
+    """A previous session (files + cwd) is reopened by --resume."""
+    cfg = os.path.join(tmp, ".config", "vix")
+    os.makedirs(cfg, exist_ok=True)
+    f1 = os.path.join(tmp, "a.txt")
+    f2 = os.path.join(tmp, "b.txt")
+    with open(f1, "w") as f:
+        f.write("file a\n")
+    with open(f2, "w") as f:
+        f.write("file b\n")
+    with open(os.path.join(cfg, "session.json"), "w") as f:
+        f.write('{\n    "current_dir": "%s",\n    "current_tab": 1,\n    "files": ["%s", "%s"]\n}\n'
+                % (tmp, f1, f2))
+
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = tmp
+    try:
+        pid, fd = spawn(sys.argv[1], tmp, ["--resume"])
+        try:
+            time.sleep(0.4)
+            out = drain(fd, 0.4)
+            if b"a.txt" not in out or b"b.txt" not in out:
+                return "session files not reopened: %r" % out[:200]
+            # The status-bar welcome message hides L:/C: for STATUS_TIMEOUT
+            # seconds; wait it out, then nudge the cursor so the status bar
+            # repaints with the buffer position.
+            time.sleep(3.2)
+            os.write(fd, b"\x1bOB")
+            time.sleep(0.4)
+            out += drain(fd, 0.5)
+            if b"L:1/1" not in out:
+                return "current_tab=1 not honoured: %r" % out[:200]
+            status = clean_quit(fd, pid)
+            if exit_code(status) != 0:
+                return "exit code %r after resume" % exit_code(status)
+            return None
+        finally:
+            os.close(fd)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
+def scenario_session_roundtrip(tmp):
+    """Quitting writes a session; --resume reopens the same tabs."""
+    cfg = os.path.join(tmp, ".config", "vix")
+    os.makedirs(cfg, exist_ok=True)
+    f1 = os.path.join(tmp, "s1.txt")
+    f2 = os.path.join(tmp, "s2.txt")
+    with open(f1, "w") as f:
+        f.write("one\n")
+    with open(f2, "w") as f:
+        f.write("two\n")
+
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = tmp
+    try:
+        # First run: open two files, quit. Quit persists the session.
+        pid, fd = spawn(sys.argv[1], tmp, f1)
+        try:
+            os.write(fd, CTRL_Q)
+            time.sleep(0.6)
+            drain(fd, 0.3)
+            os.write(fd, b"n\n")  # no edits -> no prompt, but harmless
+            status = wait_exit(pid)
+            if exit_code(status) != 0:
+                return "exit code %r on first run" % exit_code(status)
+        finally:
+            os.close(fd)
+
+        if not os.path.exists(os.path.join(cfg, "session.json")):
+            return "session.json not written on quit"
+
+        # Second run: resume should reopen the same file.
+        pid, fd = spawn(sys.argv[1], tmp, ["--resume"])
+        try:
+            time.sleep(0.4)
+            out = drain(fd, 0.4)
+            if b"s1.txt" not in out:
+                return "resumed file not open: %r" % out[:200]
+            status = clean_quit(fd, pid)
+            if exit_code(status) != 0:
+                return "exit code %r after resume" % exit_code(status)
+            return None
+        finally:
+            os.close(fd)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: pty_smoke.py /path/to/vix", file=sys.stderr)
@@ -249,6 +386,9 @@ def main():
         ("unsaved_prompt", scenario_unsaved_prompt),
         ("crlf_roundtrip", scenario_crlf_roundtrip),
         ("save_as", scenario_save_as),
+        ("word_wrap", scenario_word_wrap),
+        ("session_resume", scenario_session_resume),
+        ("session_roundtrip", scenario_session_roundtrip),
     ]
 
     failures = 0

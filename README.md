@@ -14,24 +14,30 @@ Vix is a **modeless** terminal text editor — like **nano** or **Emacs**, you j
 
 ---
 
-## Release 1.0.3
+## Release 1.0.4
 
-Latest release: **[1.0.3](https://github.com/Jadkes/vix-editor/releases/tag/1.0.3)** — prebuilt **x86_64 Linux** binary.
+Latest release: **[1.0.4](https://github.com/Jadkes/vix-editor/releases/tag/1.0.4)** — prebuilt **x86_64 Linux** binary.
 
-What's new in 1.0.3:
+What's new in 1.0.4:
 
-- Color-coded sidebar: per-file-type colors, bold blue folders, and a highlight for the focused entry
-- Rebuilt `Ctrl+H` help window with a two-column layout
-- Files with CRLF line endings keep their line endings on save
+- **Word wrap** — long lines wrap at word boundaries (toggle in `F2` Settings)
+- **System clipboard** — `Ctrl+K` / `Ctrl+C` / `Ctrl+V` talk to the OS clipboard
+  (via `wl-copy`/`wl-paste` on Wayland, `xclip`/`xsel` on X11), falling back to
+  vix's internal clipboard when no tool is available
+- **Replace single match** — during search, `Ctrl+D` replaces only the
+  highlighted match instead of every occurrence
+- **Session resume** — `vix --resume` reopens the tabs and directory from your
+  last session (saved to `~/.config/vix/session.json` on quit)
+- Multi-line paste is a single undoable command
 
 ### Install the binary (no build required)
 
 ```bash
-curl -L -o vix-1.0.3-linux-x86_64.tar.gz \
-  https://github.com/Jadkes/vix-editor/releases/download/1.0.3/vix-1.0.3-linux-x86_64.tar.gz
-tar xzf vix-1.0.3-linux-x86_64.tar.gz
-sudo install -m755 vix-1.0.3-linux-x86_64/vix /usr/local/bin/
-vix --version   # → vix 1.0.3
+curl -L -o vix-1.0.4-linux-x86_64.tar.gz \
+  https://github.com/Jadkes/vix-editor/releases/download/1.0.4/vix-1.0.4-linux-x86_64.tar.gz
+tar xzf vix-1.0.4-linux-x86_64.tar.gz
+sudo install -m755 vix-1.0.4-linux-x86_64/vix /usr/local/bin/
+vix --version   # → vix 1.0.4
 ```
 
 ---
@@ -68,10 +74,11 @@ The suite has three test groups:
 
 - **BufferTest** — line editing, bounds checks, and byte-for-byte save round-trips
   (LF, CRLF, no trailing newline)
-- **HistoryTest** — undo/redo, redo invalidation, bounded stack trimming
+- **HistoryTest** — undo/redo, redo invalidation, bounded stack trimming,
+  single- and multi-line paste round-trips
 - **PtySmoke** — drives the real `vix` binary through a pty: open/edit/save,
-  the `^H` help window, the unsaved-changes prompt, CRLF preservation, and
-  save-as on untitled buffers
+  the `^H` help window, the unsaved-changes prompt, CRLF preservation,
+  save-as on untitled buffers, word-wrap rendering, and `--resume`
 
 Unit tests compile only the core sources (no ncurses dependency); the pty test
 needs `python3`. Disable tests with `-DBUILD_TESTING=OFF` if you don't want the
@@ -96,14 +103,14 @@ Then run `vix` from anywhere. Open a file with `vix file.cpp` or start blank wit
 | **`Ctrl + R`** | Compile & run the current file |
 | **`Ctrl + F`** | Live search |
 | **`F3`** / **`Shift+F3`** | Next / previous match |
-| **`Ctrl + D`** | Find & replace all |
+| **`Ctrl + D`** | Replace all (outside search) / replace the highlighted match (in search) |
 | **`Ctrl + P`** | Fuzzy file finder (type `mcp` to find `main.cpp`) |
 | **`Ctrl + G`** | Go to line |
 | **`Ctrl + Z`** / **`Ctrl + Y`** | Undo / redo |
 | **`Ctrl + N`** | New tab |
 | **`F5`** / **`Shift+Tab`** | Next / previous tab |
 | **`Ctrl + \`** | Close tab |
-| **`Ctrl + K` / `Ctrl + C` / `Ctrl + V`** | Cut / copy / paste line |
+| **`Ctrl + K` / `Ctrl + C` / `Ctrl + V`** | Cut / copy / paste (system clipboard) |
 
 ### Search flags (while searching)
 
@@ -148,4 +155,7 @@ Settings live in `~/.config/vix/settings.json` and are written when you change t
 - Auto-indent
 - Theme (Monokai, Dracula, Nord, Solarized Light)
 - Default language for new files
-- Word wrap (reserved)
+- Word wrap
+
+When you quit, vix also writes `~/.config/vix/session.json` (the open tabs and
+directory); start it with `vix --resume` to pick back up where you left off.
