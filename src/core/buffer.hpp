@@ -38,6 +38,7 @@ private:
     std::string filename;
     bool modified;
     bool ends_with_newline;
+    bool crlf;
 };
 
 #endif

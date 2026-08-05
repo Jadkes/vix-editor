@@ -3,14 +3,15 @@
  *
  * Keeps text as a std::vector<std::string> of lines (one entry per \n
  * terminator). The ends_with_newline flag records whether the source file
- * ended in a newline, so SaveFile can round-trip byte-for-byte instead of
- * silently appending or dropping a trailing newline.
+ * ended in a newline, and crlf records whether it used \r\n endings, so
+ * SaveFile can round-trip byte-for-byte instead of silently appending,
+ * dropping a trailing newline, or converting CRLF to LF.
  *
  * Not thread-safe; the editor only touches a buffer from the main loop.
  */
 #include "buffer.hpp"
 
-Buffer::Buffer() : filename(""), modified(false), ends_with_newline(false) { lines.push_back(""); }
+Buffer::Buffer() : filename(""), modified(false), ends_with_newline(false), crlf(false) { lines.push_back(""); }
 
 void Buffer::LoadFile(const std::string& fname) {
     std::ifstream f(fname, std::ios::binary);
@@ -28,7 +29,11 @@ void Buffer::LoadFile(const std::string& fname) {
     f.seekg(0, std::ios::beg);
     std::string l;
     while (std::getline(f, l)) {
-        if (!l.empty() && l.back() == '\r') l.pop_back();  // strip CR for CRLF files
+        if (!l.empty() && l.back() == '\r') {
+            // The first line decides the line-ending style so save can restore it.
+            if (lines.empty()) crlf = true;
+            l.pop_back();
+        }
         lines.push_back(l);
     }
     if (lines.empty()) lines.push_back("");
@@ -40,11 +45,13 @@ bool Buffer::SaveFile() {
     if (filename.empty()) return false;
     std::ofstream f(filename);
     if (!f.is_open()) return false;
-    // Every line but the last gets a newline; the last gets one only if the
-    // original file ended with one. Not splitting drives the exact restore.
+    // Every line but the last gets a line ending; the last gets one only if the
+    // original file ended with one. CRLF files keep their \r so the round-trip
+    // is byte-for-byte instead of silently normalizing to LF.
+    const char* nl = crlf ? "\r\n" : "\n";
     for (size_t i = 0; i < lines.size(); i++) {
         if (i + 1 < lines.size() || ends_with_newline)
-            f << lines[i] << "\n";
+            f << lines[i] << nl;
         else
             f << lines[i];
     }
