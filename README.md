@@ -2,7 +2,15 @@
 
 Hey. You just opened a terminal and something *vibed*.
 
-Vix is a C++ terminal text editor with a tabbed buffer, a file-explorer sidebar, live search, syntax highlighting, and an undo/redo stack that behaves itself. It even compiles and runs your code so you don't have to lift a finger (okay, maybe one finger. Ctrl+R).
+Vix is a **modeless** terminal text editor — like **nano** or **Emacs**, you just start typing. No modes, no `:wq!`, no muscle-memory roulette. It's a C++ editor with a tabbed buffer, a file-explorer sidebar, live search, syntax highlighting, and an undo/redo stack that behaves itself. It even compiles and runs your code so you don't have to lift a finger (okay, maybe one finger. Ctrl+R).
+
+---
+
+## Screenshots
+
+![Vix with a single tab](assets/vix-screenshot-1.png)
+
+![Vix with two tabs](assets/vix-screenshot-2.png)
 
 ---
 
