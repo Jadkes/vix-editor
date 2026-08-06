@@ -144,3 +144,50 @@ TEST(HistoryTest, PasteCommandWithTrailingNewline) {
     ASSERT_EQ(buf.GetLineCount(), 1);
     EXPECT_EQ(buf[0], "one");
 }
+
+TEST(HistoryTest, DeleteRangeSingleLine) {
+    History hist;
+    Buffer buf;
+    buf[0] = "abcdef";
+    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 2, 0, 4));
+    EXPECT_EQ(buf[0], "abef");
+    hist.undo();
+    EXPECT_EQ(buf[0], "abcdef");
+}
+
+TEST(HistoryTest, DeleteRangeAcrossLines) {
+    History hist;
+    Buffer buf;
+    buf[0] = "alpha";
+    buf.PushBack("beta");
+    buf.PushBack("gamma");
+    // From 'p' of alpha (col 2) to 'm' of gamma (col 2), exclusive of the end
+    // cursor: removes "pha\nbeta\nga" and keeps "al" + "mma".
+    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 2, 2, 2));
+    ASSERT_EQ(buf.GetLineCount(), 1);
+    EXPECT_EQ(buf[0], "almma");
+    hist.undo();
+    ASSERT_EQ(buf.GetLineCount(), 3);
+    EXPECT_EQ(buf[0], "alpha");
+    EXPECT_EQ(buf[1], "beta");
+    EXPECT_EQ(buf[2], "gamma");
+}
+
+TEST(HistoryTest, DeleteRangeReversedArguments) {
+    History hist;
+    Buffer buf;
+    buf[0] = "abcdef";
+    // Same span given in reverse order; normalization must handle it.
+    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 4, 0, 2));
+    EXPECT_EQ(buf[0], "abef");
+    hist.undo();
+    EXPECT_EQ(buf[0], "abcdef");
+}
+
+TEST(HistoryTest, DeleteRangeZeroWidthIsNoOp) {
+    History hist;
+    Buffer buf;
+    buf[0] = "abcdef";
+    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 3, 0, 3));
+    EXPECT_EQ(buf[0], "abcdef");
+}

@@ -80,6 +80,21 @@ private:
     int inserted_lines;     // how many extra lines execute() added
 };
 
+// Delete a span that may cross lines: from (a_y,a_x) inclusive to (b_y,b_x)
+// exclusive, normalized so a <= b. execute() stitches the surviving pieces
+// together; undo() splices the captured lines back verbatim.
+class DeleteRangeCommand : public Command {
+public:
+    DeleteRangeCommand(Buffer* buf, int a_y, int a_x, int b_y, int b_x);
+    bool execute() override;
+    bool undo() override;
+    std::string description() const override;
+private:
+    Buffer* buffer;
+    int a_y, a_x, b_y, b_x;
+    std::vector<std::string> saved;  // full original lines a_y..b_y inclusive
+};
+
 // Split the line above insert_before_line into first_half | second_half.
 // execute() and undo() both rewrite the line, so redo reproduces the split.
 class NewLineCommand : public Command {

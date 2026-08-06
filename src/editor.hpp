@@ -21,7 +21,7 @@
 namespace fs = std::filesystem;
 
 #ifndef VIX_VERSION
-#define VIX_VERSION "1.0.4"
+#define VIX_VERSION "1.0.5"
 #endif
 #define VIX_NAME "vix"
 
@@ -61,7 +61,15 @@ struct Tab {
     SyntaxRules rules;
     std::string clipboard;
     bool in_block_comment;
-    Tab() : x(0), y(0), v_scroll(0), h_scroll(0), v_seg(0), in_block_comment(false) {}
+    // Mouse selection (buffer coordinates). sel_active marks a live drag;
+    // sel_anchor is where the button went down, sel_cur the latest position.
+    bool sel_active;
+    bool sel_has;        // a real (non-zero) selection exists
+    int sel_anchor_x, sel_anchor_y;
+    int sel_cur_x, sel_cur_y;
+    Tab() : x(0), y(0), v_scroll(0), h_scroll(0), v_seg(0), in_block_comment(false),
+           sel_active(false), sel_has(false), sel_anchor_x(0), sel_anchor_y(0),
+           sel_cur_x(0), sel_cur_y(0) {}
 };
 
 struct SearchHit {
@@ -110,6 +118,11 @@ private:
     void set_status(const std::string& msg);
     void clamp_cursor(Tab& tab);
     static bool is_untitled(const Buffer& buffer);
+
+    void clear_selection(Tab& tab);
+    void screen_to_buffer(int ey, int ex, Tab& tab, int& line, int& col);
+    void selection_bounds(const Tab& tab, int& a_y, int& a_x, int& b_y, int& b_x) const;
+    std::string selected_text(Tab& tab);
 
     int current_tab;
     std::vector<std::unique_ptr<Tab>> tabs;

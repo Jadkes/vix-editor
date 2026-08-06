@@ -310,6 +310,77 @@ void Editor::clamp_cursor(Tab& tab) {
     tab.x = std::clamp(tab.x, 0, (int)tab.buffer[tab.y].length());
 }
 
+// Drop any pending mouse selection and reset its anchor to the cursor so the
+// next drag starts from a clean state.
+void Editor::clear_selection(Tab& tab) {
+    tab.sel_active = false;
+    tab.sel_has = false;
+    tab.sel_anchor_x = tab.x;
+    tab.sel_anchor_y = tab.y;
+    tab.sel_cur_x = tab.x;
+    tab.sel_cur_y = tab.y;
+}
+
+// Normalize the selection span so (a_y,a_x) is the row-major start. Only valid
+// when sel_has is true; the cursor itself is not part of the span.
+void Editor::selection_bounds(const Tab& tab, int& a_y, int& a_x, int& b_y, int& b_x) const {
+    if (tab.sel_anchor_y < tab.sel_cur_y ||
+        (tab.sel_anchor_y == tab.sel_cur_y && tab.sel_anchor_x <= tab.sel_cur_x)) {
+        a_y = tab.sel_anchor_y; a_x = tab.sel_anchor_x;
+        b_y = tab.sel_cur_y;    b_x = tab.sel_cur_x;
+    } else {
+        a_y = tab.sel_cur_y;    a_x = tab.sel_cur_x;
+        b_y = tab.sel_anchor_y; b_x = tab.sel_anchor_x;
+    }
+}
+
+// Map a screen cell (ey,ex) in the editor area to buffer (line, col),
+// honoring the sidebar, line-number gutter, h_scroll and word wrap.
+void Editor::screen_to_buffer(int ey, int ex, Tab& tab, int& line, int& col) {
+    int my, mx;
+    getmaxyx(stdscr, my, mx);
+    (void)my;
+    int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
+    int clicked_y = ey - 1;
+    if (settings.word_wrap) {
+        int text_w = mx - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
+        if (text_w < 1) text_w = 1;
+        int vis = -tab.v_seg;
+        int line_idx = tab.v_scroll;
+        for (; line_idx < tab.buffer.GetLineCount(); line_idx++) {
+            int rows = wrap_rows(line_idx, text_w, tab);
+            if (clicked_y < vis + rows) break;
+            vis += rows;
+        }
+        if (line_idx >= tab.buffer.GetLineCount()) line_idx = tab.buffer.GetLineCount() - 1;
+        line = line_idx;
+        auto starts = wrap_starts(tab.buffer[line], text_w);
+        int seg_in_line = std::clamp(clicked_y - vis, 0, (int)starts.size() - 1);
+        int cx = ex - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
+        col = std::clamp(starts[seg_in_line] + std::max(0, cx), 0, (int)tab.buffer[line].length());
+    } else {
+        line = clicked_y + tab.v_scroll;
+        if (line < 0) line = 0;
+        if (line >= tab.buffer.GetLineCount()) line = tab.buffer.GetLineCount() - 1;
+        int cx = ex - sw - (settings.line_numbers ? LINENUM_WIDTH : 0) + tab.h_scroll;
+        col = std::clamp(cx, 0, (int)tab.buffer[line].length());
+    }
+}
+
+// Concatenate the selected span as text; for multi-line selections the lines
+// are joined with '\n'.
+std::string Editor::selected_text(Tab& tab) {
+    if (!tab.sel_has) return "";
+    int a_y, a_x, b_y, b_x;
+    selection_bounds(tab, a_y, a_x, b_y, b_x);
+    if (a_y == b_y) return tab.buffer[a_y].substr(a_x, b_x - a_x);
+    std::string out = tab.buffer[a_y].substr(a_x);
+    for (int i = a_y + 1; i < b_y; i++) { out += '\n'; out += tab.buffer[i]; }
+    out += '\n';
+    out += tab.buffer[b_y].substr(0, b_x);
+    return out;
+}
+
 bool Editor::is_untitled(const Buffer& buffer) {
     return buffer.GetFilename().empty() || buffer.GetFilename().rfind("Untitled", 0) == 0;
 }
@@ -881,6 +952,16 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
         mvprintw(row, sw, "%3d ", buf_idx + 1);
         attroff(COLOR_PAIR(CP_LINENUM));
     }
+    // Column range of this line covered by an active mouse selection, if any.
+    int sel_lo = -1, sel_hi = -1;
+    if (tab.sel_has && !focus_sidebar) {
+        int a_y, a_x, b_y, b_x;
+        selection_bounds(tab, a_y, a_x, b_y, b_x);
+        if (buf_idx >= a_y && buf_idx <= b_y) {
+            sel_lo = (buf_idx == a_y) ? a_x : 0;
+            sel_hi = (buf_idx == b_y) ? b_x : (int)line.length();
+        }
+    }
     int cur_x = sw + (settings.line_numbers ? LINENUM_WIDTH : 0);
     int i = start_col;
     while (i < end_col && cur_x < max_x) {
@@ -910,16 +991,23 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
         }
 
         bool is_match = (match_pos.active && match_pos.y == buf_idx && match_pos.x == i);
-        if (is_match) attron(COLOR_PAIR(CP_MATCH));
-
         char c = line[i];
         bool is_c_cpp = (tab.rules.lang == 1 || tab.rules.lang == 6);
 
+        // Apply reverse video for a buffer column covered by the selection.
+        // Called right before each addch because some branches emit several
+        // characters (words, strings, comments) under one color attribute.
+        auto sel_attr = [&](int idx) {
+            if (sel_lo >= 0 && idx >= sel_lo && idx < sel_hi) attron(A_REVERSE);
+            else attroff(A_REVERSE);
+        };
+        if (is_match) attron(COLOR_PAIR(CP_MATCH));
+
         if (c == '"' || c == '\'') {
             attron(COLOR_PAIR(CP_STRING));
-            addch(c); cur_x++; i++;
+            sel_attr(i); addch(c); cur_x++; i++;
             while (i < end_col && cur_x < max_x) {
-                addch(line[i]); cur_x++;
+                sel_attr(i); addch(line[i]); cur_x++;
                 if (line[i] == c && (i == 0 || line[i-1] != '\\')) break;
                 i++;
             }
@@ -929,28 +1017,28 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
             attron(COLOR_PAIR(CP_COMMENT));
             while (i < end_col && cur_x < max_x) {
                 if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
-                    addch(line[i]); cur_x++; i++;
-                    addch(line[i]); cur_x++; i++;
+                    sel_attr(i); addch(line[i]); cur_x++; i++;
+                    sel_attr(i); addch(line[i]); cur_x++; i++;
                     tab.in_block_comment = false;
                     break;
                 }
-                addch(line[i]); cur_x++; i++;
+                sel_attr(i); addch(line[i]); cur_x++; i++;
             }
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '/' && i+1 < (int)line.length() && line[i+1] == '/') {
             attron(COLOR_PAIR(CP_COMMENT));
-            while (i < end_col && cur_x < max_x) { addch(line[i]); cur_x++; i++; }
+            while (i < end_col && cur_x < max_x) { sel_attr(i); addch(line[i]); cur_x++; i++; }
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '/' && i+1 < (int)line.length() && line[i+1] == '*') {
             attron(COLOR_PAIR(CP_COMMENT));
-            addch(line[i]); cur_x++; i++;
-            addch(line[i]); cur_x++; i++;
+            sel_attr(i); addch(line[i]); cur_x++; i++;
+            sel_attr(i); addch(line[i]); cur_x++; i++;
             bool closed = false;
             while (i < end_col && cur_x < max_x) {
-                addch(line[i]); cur_x++;
+                sel_attr(i); addch(line[i]); cur_x++;
                 if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
                     i++;
-                    addch(line[i]); cur_x++;
+                    sel_attr(i); addch(line[i]); cur_x++;
                     closed = true;
                     break;
                 }
@@ -960,23 +1048,26 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t')) {
             attron(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
-            while (i < end_col && cur_x < max_x) { addch(line[i]); cur_x++; i++; }
+            while (i < end_col && cur_x < max_x) { sel_attr(i); addch(line[i]); cur_x++; i++; }
             attroff(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
         } else if (std::isdigit((unsigned char)c)) {
             attron(COLOR_PAIR(CP_ORANGE));
-            addch(c); cur_x++; i++;
+            sel_attr(i); addch(c); cur_x++; i++;
             attroff(COLOR_PAIR(CP_ORANGE));
         } else if (std::isalpha((unsigned char)c) || c == '_') {
+            int wstart = i;
             std::string w;
             while (i < end_col && (std::isalnum((unsigned char)line[i]) || line[i] == '_')) w += line[i++];
             bool is_kw = false;
             for (auto& k : tab.rules.keywords) if (k == w) { is_kw = true; break; }
             if (is_kw) attron(COLOR_PAIR(CP_KEYWORD) | A_BOLD);
             else if (i < end_col && line[i] == '(') attron(COLOR_PAIR(CP_CYAN));
-            for (char cc : w) { if (cur_x < max_x) { addch(cc); cur_x++; } }
+            for (int wi = 0; wi < (int)w.size(); wi++) {
+                if (cur_x < max_x) { sel_attr(wstart + wi); addch(w[wi]); cur_x++; }
+            }
             attroff(COLOR_PAIR(CP_KEYWORD) | A_BOLD | COLOR_PAIR(CP_CYAN));
         } else {
-            addch(c); cur_x++; i++;
+            sel_attr(i); addch(c); cur_x++; i++;
         }
         if (is_match) attroff(COLOR_PAIR(CP_MATCH));
     }
@@ -1124,6 +1215,9 @@ void Editor::run() {
     use_default_colors();
     ApplyTheme(themes[settings.theme]);
     mousemask(ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION, NULL);
+    // Report every mouse event as it arrives; otherwise ncurses folds a fast
+    // double-click into one event and swallows the drag that follows it.
+    mouseinterval(0);
 
     auto cleanup = [&]() {
         noraw();
@@ -1262,33 +1356,57 @@ void Editor::run() {
                             }
                             xpos += (int)tab_str.size();
                         }
-                    } else {
+                    } else if (tab.sel_active) {
+                        // Button already down: this is a drag, extend the span.
                         focus_sidebar = false;
-                        int clicked_y = event.y - 1;
-                        if (settings.word_wrap) {
-                            // Walk lines from the top of the viewport to the
-                            // clicked row, using the wrapped row counts.
-                            int vis = -tab.v_seg;
-                            int line_idx = tab.v_scroll;
-                            for (; line_idx < tab.buffer.GetLineCount(); line_idx++) {
-                                int rows = wrap_rows(line_idx, text_w, tab);
-                                if (clicked_y < vis + rows) break;
-                                vis += rows;
-                            }
-                            if (line_idx >= tab.buffer.GetLineCount()) line_idx = tab.buffer.GetLineCount() - 1;
-                            tab.y = line_idx;
-                            auto starts = wrap_starts(tab.buffer[tab.y], text_w);
-                            int col_in_line = std::clamp(clicked_y - vis, 0, (int)starts.size() - 1);
-                            tab.x = std::clamp(starts[col_in_line], 0, (int)tab.buffer[tab.y].length());
-                        } else {
-                            int line = clicked_y + tab.v_scroll;
-                            int sw = show_sidebar ? SIDEBAR_WIDTH : 0;
-                            int clicked_x = event.x - sw - (settings.line_numbers ? LINENUM_WIDTH : 0) + tab.h_scroll;
-                            if (line >= 0 && line < tab.buffer.GetLineCount()) {
-                                tab.y = line;
-                                tab.x = std::max(0, std::min((int)tab.buffer[tab.y].length(), clicked_x));
-                            }
-                        }
+                        int line, col;
+                        screen_to_buffer(event.y, event.x, tab, line, col);
+                        tab.y = line;
+                        tab.x = col;
+                        tab.sel_cur_x = col;
+                        tab.sel_cur_y = line;
+                        tab.sel_has = true;
+                    } else {
+                        // Fresh press: place the cursor and start a selection.
+                        focus_sidebar = false;
+                        int line, col;
+                        screen_to_buffer(event.y, event.x, tab, line, col);
+                        tab.y = line;
+                        tab.x = col;
+                        tab.sel_active = true;
+                        tab.sel_has = false;
+                        tab.sel_anchor_x = col;
+                        tab.sel_anchor_y = line;
+                        tab.sel_cur_x = col;
+                        tab.sel_cur_y = line;
+                    }
+                } else if (event.bstate & REPORT_MOUSE_POSITION) {
+                    // Mouse moved while a drag is in progress; extend the
+                    // span. Plain hover (no button down) is ignored.
+                    if (tab.sel_active && !focus_sidebar) {
+                        int line, col;
+                        screen_to_buffer(event.y, event.x, tab, line, col);
+                        tab.y = line;
+                        tab.x = col;
+                        tab.sel_cur_x = col;
+                        tab.sel_cur_y = line;
+                        tab.sel_has = true;
+                    }
+                } else if (event.bstate & (BUTTON1_RELEASED | BUTTON1_CLICKED)) {
+                    if (tab.sel_active && !focus_sidebar) {
+                        // ncurses drops intermediate motion events during a
+                        // fast drag, so the final position often arrives only
+                        // on the release; extend the span to it before
+                        // finalizing.
+                        int line, col;
+                        screen_to_buffer(event.y, event.x, tab, line, col);
+                        tab.sel_cur_x = col;
+                        tab.sel_cur_y = line;
+                        tab.sel_has = true;
+                        tab.sel_active = false;
+                        // A click without a drag leaves nothing selected.
+                        if (tab.sel_anchor_x == tab.sel_cur_x && tab.sel_anchor_y == tab.sel_cur_y)
+                            tab.sel_has = false;
                     }
                 }
             }
@@ -1335,6 +1453,11 @@ void Editor::run() {
             continue;
         }
 
+        // A selection is consumed by the clipboard trio; any other key (typing,
+        // cursor move, search...) drops it so stale highlights never linger.
+        bool clip_key = (ch == CTRL('k') || ch == CTRL('c') || ch == CTRL('v'));
+        if (!clip_key) clear_selection(tab);
+
         if (ch == CTRL('q')) {
             if (tab.buffer.IsModified()) {
                 std::string a = prompt("Unsaved changes. Save? (y/n): ");
@@ -1363,7 +1486,18 @@ void Editor::run() {
             redraw = true;
         }
         else if (ch == CTRL('k')) {
-            if (tab.y < tab.buffer.GetLineCount()) {
+            if (tab.sel_has) {
+                // Cut the selected span instead of the whole line.
+                int a_y, a_x, b_y, b_x;
+                selection_bounds(tab, a_y, a_x, b_y, b_x);
+                tab.clipboard = selected_text(tab);
+                system_copy(tab.clipboard);
+                auto cmd = std::make_unique<DeleteRangeCommand>(&tab.buffer, a_y, a_x, b_y, b_x);
+                tab.history.execute(std::move(cmd));
+                tab.y = a_y;
+                tab.x = a_x;
+                clear_selection(tab);
+            } else if (tab.y < tab.buffer.GetLineCount()) {
                 tab.clipboard = tab.buffer[tab.y];
                 system_copy(tab.clipboard);
                 auto cmd = std::make_unique<DeleteCommand>(&tab.buffer, tab.clipboard, tab.y, 0);
@@ -1373,7 +1507,13 @@ void Editor::run() {
             redraw = true;
         }
         else if (ch == CTRL('c')) {
-            if (tab.y < tab.buffer.GetLineCount()) {
+            if (tab.sel_has) {
+                // Copy the selection; leave it highlighted like a browser.
+                tab.clipboard = selected_text(tab);
+                system_copy(tab.clipboard);
+                status_msg = "Copied";
+                msg_time = std::chrono::steady_clock::now();
+            } else if (tab.y < tab.buffer.GetLineCount()) {
                 tab.clipboard = tab.buffer[tab.y];
                 system_copy(tab.clipboard);
                 status_msg = "Copied";
@@ -1385,7 +1525,22 @@ void Editor::run() {
             std::string text = system_paste();
             if (text.empty()) text = tab.clipboard;
             if (!text.empty()) {
-                if (text.find('\n') != std::string::npos) {
+                if (tab.sel_has) {
+                    // Replacing the selection: delete it, then paste at its start.
+                    // wl-copy/xclip append a newline to the system clipboard, so
+                    // drop a single trailing '\n' to keep the span replacement
+                    // character-exact (multi-line selection text keeps its joins).
+                    if (!text.empty() && text.back() == '\n') text.pop_back();
+                    int a_y, a_x, b_y, b_x;
+                    selection_bounds(tab, a_y, a_x, b_y, b_x);
+                    auto del = std::make_unique<DeleteRangeCommand>(&tab.buffer, a_y, a_x, b_y, b_x);
+                    tab.history.execute(std::move(del));
+                    tab.y = a_y;
+                    tab.x = a_x;
+                    clear_selection(tab);
+                    auto cmd = std::make_unique<PasteCommand>(&tab.buffer, text, tab.y, tab.x);
+                    tab.history.execute(std::move(cmd));
+                } else if (text.find('\n') != std::string::npos) {
                     auto cmd = std::make_unique<PasteCommand>(&tab.buffer, text, tab.y, tab.x);
                     tab.history.execute(std::move(cmd));
                 } else {

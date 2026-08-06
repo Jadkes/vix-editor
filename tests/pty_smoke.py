@@ -25,6 +25,8 @@ CTRL_H = b"\x08"
 CTRL_Q = b"\x11"
 CTRL_S = b"\x13"
 CTRL_G = b"\x07"
+CTRL_T = b"\x14"
+CTRL_K = b"\x0b"
 
 ROWS, COLS = 30, 100
 STARTUP_DELAY = 1.2
@@ -375,6 +377,72 @@ def scenario_session_roundtrip(tmp):
             os.environ["HOME"] = saved_home
 
 
+def scenario_mouse_selection(tmp):
+    """Drag with the mouse selects a span; ^C copies it and ^K cuts it.
+
+    Mouse events use the SGR protocol. With the sidebar hidden (^T) and the
+    line-number gutter disabled, screen x=5,y=1 maps to buffer col 1 of line
+    0, and x=8,y=1 to col 4, so the selected span is "bcd" of "abcdefghij".
+    """
+    fpath = os.path.join(tmp, "sel.txt")
+    with open(fpath, "w") as f:
+        f.write("abcdefghij\nsecond line\n")
+
+    pid, fd = spawn(sys.argv[1], tmp, fpath)
+    try:
+        out = drain(fd, 0.4)
+        if b"sel.txt" not in out:
+            return "file not opened: %r" % out[:200]
+
+        # Disable the sidebar so clicks land in the text area at known columns.
+        os.write(fd, CTRL_T)
+        time.sleep(0.3)
+        drain(fd, 0.3)
+
+        # Fast double-click at x=6,y=2 then drag to x=9,y=2 and release.
+        # ncurses folds the two fast clicks into one event unless
+        # mouseinterval(0) is set; this sequence regression-tests that the
+        # following drag still starts a selection.
+        os.write(fd, b"\x1b[<0;6;2M")
+        time.sleep(0.08)
+        os.write(fd, b"\x1b[<0;6;2m")
+        time.sleep(0.08)
+        os.write(fd, b"\x1b[<0;6;2M")
+        time.sleep(0.2)
+        os.write(fd, b"\x1b[<0;9;2M")
+        time.sleep(0.2)
+        os.write(fd, b"\x1b[<0;9;2m")
+        time.sleep(0.2)
+        out = drain(fd, 0.3)
+
+        # Reverse video must cover cols 1-3: 'a' normal, 'bcd' reversed.
+        if b"\x1b[0;7m" not in out and b"\x1b[7m" not in out:
+            return "selection not highlighted: %r" % out[:300]
+
+        # Let the release settle before cutting; ASan builds run slower.
+        time.sleep(0.3)
+        drain(fd, 0.2)
+
+        # ^K cuts the span, leaving "aefghij".
+        os.write(fd, CTRL_K)
+        time.sleep(0.3)
+        os.write(fd, CTRL_S)
+        time.sleep(0.4)
+        drain(fd, 0.3)
+
+        with open(fpath) as f:
+            content = f.read()
+        if content != "aefghij\nsecond line\n":
+            return "cut produced %r, want 'aefghij\nsecond line\n'" % content
+
+        status = clean_quit(fd, pid)
+        if exit_code(status) != 0:
+            return "exit code %r after selection cut" % exit_code(status)
+        return None
+    finally:
+        os.close(fd)
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: pty_smoke.py /path/to/vix", file=sys.stderr)
@@ -389,6 +457,7 @@ def main():
         ("word_wrap", scenario_word_wrap),
         ("session_resume", scenario_session_resume),
         ("session_roundtrip", scenario_session_roundtrip),
+        ("mouse_selection", scenario_mouse_selection),
     ]
 
     failures = 0

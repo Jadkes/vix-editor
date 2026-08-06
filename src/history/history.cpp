@@ -127,6 +127,48 @@ bool PasteCommand::undo() {
 
 std::string PasteCommand::description() const { return "Paste"; }
 
+DeleteRangeCommand::DeleteRangeCommand(Buffer* buf, int a_y, int a_x, int b_y, int b_x)
+    : buffer(buf), a_y(a_y), a_x(a_x), b_y(b_y), b_x(b_x) {}
+
+bool DeleteRangeCommand::execute() {
+    if (!buffer) return false;
+    int n = buffer->GetLineCount();
+    // Normalize so (a_y,a_x) <= (b_y,b_x) in row-major order.
+    if (b_y < a_y || (b_y == a_y && b_x < a_x)) {
+        std::swap(a_y, b_y);
+        std::swap(a_x, b_x);
+    }
+    if (a_y < 0) a_y = 0;
+    if (b_y >= n) b_y = n - 1;
+    if (b_y < a_y) return false;
+    if (a_x < 0) a_x = 0;
+    if (a_x > (int)buffer->operator[](a_y).length()) a_x = (int)buffer->operator[](a_y).length();
+    if (b_x > (int)buffer->operator[](b_y).length()) b_x = (int)buffer->operator[](b_y).length();
+
+    saved.clear();
+    for (int i = a_y; i <= b_y; i++) saved.push_back(buffer->operator[](i));
+
+    std::string head = saved[0].substr(0, a_x);
+    std::string tail = saved.back().substr(b_x);
+    // Join the surviving fragments onto line a_y, then drop the lines between.
+    buffer->operator[](a_y) = head + tail;
+    for (int i = 0; i < b_y - a_y; i++) buffer->EraseLine(a_y + 1);
+    buffer->SetModified(true);
+    return true;
+}
+
+bool DeleteRangeCommand::undo() {
+    if (!buffer) return false;
+    if (a_y < 0 || a_y >= buffer->GetLineCount()) return false;
+    // Restore the original lines; insert the collapsed ones below a_y.
+    buffer->operator[](a_y) = saved[0];
+    for (size_t i = 1; i < saved.size(); i++) buffer->InsertLine(a_y + (int)i, saved[i]);
+    buffer->SetModified(true);
+    return true;
+}
+
+std::string DeleteRangeCommand::description() const { return "Delete selection"; }
+
 NewLineCommand::NewLineCommand(Buffer* buf, int insert_before_line,
                                const std::string& first_half, const std::string& second_half,
                                const std::string& orig_full_line)

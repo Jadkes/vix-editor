@@ -14,30 +14,27 @@ Vix is a **modeless** terminal text editor — like **nano** or **Emacs**, you j
 
 ---
 
-## Release 1.0.4
+## Release 1.0.5
 
-Latest release: **[1.0.4](https://github.com/Jadkes/vix-editor/releases/tag/1.0.4)** — prebuilt **x86_64 Linux** binary.
+Latest release: **[1.0.5](https://github.com/Jadkeskes/vix-editor/releases/tag/1.0.5)** — prebuilt **x86_64 Linux** binary.
 
-What's new in 1.0.4:
+What's new in 1.0.5:
 
-- **Word wrap** — long lines wrap at word boundaries (toggle in `F2` Settings)
-- **System clipboard** — `Ctrl+K` / `Ctrl+C` / `Ctrl+V` talk to the OS clipboard
-  (via `wl-copy`/`wl-paste` on Wayland, `xclip`/`xsel` on X11), falling back to
-  vix's internal clipboard when no tool is available
-- **Replace single match** — during search, `Ctrl+D` replaces only the
-  highlighted match instead of every occurrence
-- **Session resume** — `vix --resume` reopens the tabs and directory from your
-  last session (saved to `~/.config/vix/session.json` on quit)
-- Multi-line paste is a single undoable command
+- **Mouse text selection** — click and drag to highlight a span (reverse
+  video); `Ctrl+K` / `Ctrl+C` / `Ctrl+V` cut / copy / paste over it, like a
+  browser. Works across lines; any other key dismisses the selection
+- Selection-aware **cut / copy / paste**: `Ctrl+K` cuts just the selection,
+  `Ctrl+C` copies it (highlight stays), `Ctrl+V` replaces it in place
+- Multi-line selection delete/paste are single undoable commands
 
 ### Install the binary (no build required)
 
 ```bash
-curl -L -o vix-1.0.4-linux-x86_64.tar.gz \
-  https://github.com/Jadkes/vix-editor/releases/download/1.0.4/vix-1.0.4-linux-x86_64.tar.gz
-tar xzf vix-1.0.4-linux-x86_64.tar.gz
-sudo install -m755 vix-1.0.4-linux-x86_64/vix /usr/local/bin/
-vix --version   # → vix 1.0.4
+curl -L -o vix-1.0.5-linux-x86_64.tar.gz \
+  https://github.com/Jadkeskes/vix-editor/releases/download/1.0.5/vix-1.0.5-linux-x86_64.tar.gz
+tar xzf vix-1.0.5-linux-x86_64.tar.gz
+sudo install -m755 vix-1.0.5-linux-x86_64/vix /usr/local/bin/
+vix --version   # → vix 1.0.5
 ```
 
 ---
@@ -111,6 +108,7 @@ Then run `vix` from anywhere. Open a file with `vix file.cpp` or start blank wit
 | **`F5`** / **`Shift+Tab`** | Next / previous tab |
 | **`Ctrl + \`** | Close tab |
 | **`Ctrl + K` / `Ctrl + C` / `Ctrl + V`** | Cut / copy / paste (system clipboard) |
+| **Mouse drag** | Select a span; cut / copy / paste over it with the keys above |
 
 ### Search flags (while searching)
 
