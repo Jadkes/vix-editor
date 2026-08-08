@@ -35,3 +35,6 @@ vix_data.json
 .sisyphus/
 config/
 data/
+
+# Local release checklist (not part of the repo)
+NEWVERSION.md

@@ -14,27 +14,30 @@ Vix is a **modeless** terminal text editor — like **nano** or **Emacs**, you j
 
 ---
 
-## Release 1.0.5
+## Release 1.0.6
 
-Latest release: **[1.0.5](https://github.com/Jadkeskes/vix-editor/releases/tag/1.0.5)** — prebuilt **x86_64 Linux** binary.
+Latest release: **[1.0.6](https://github.com/Jadkes/vix-editor/releases/tag/1.0.6)** — prebuilt **x86_64 Linux** binary.
 
-What's new in 1.0.5:
+What's new in 1.0.6:
 
-- **Mouse text selection** — click and drag to highlight a span (reverse
-  video); `Ctrl+K` / `Ctrl+C` / `Ctrl+V` cut / copy / paste over it, like a
-  browser. Works across lines; any other key dismisses the selection
-- Selection-aware **cut / copy / paste**: `Ctrl+K` cuts just the selection,
-  `Ctrl+C` copies it (highlight stays), `Ctrl+V` replaces it in place
-- Multi-line selection delete/paste are single undoable commands
+- **C++20 modernization** — the hot paths now use `std::string_view`,
+  `std::from_chars`, `std::optional`, `std::ranges`, `std::format`,
+  `std::span`, structured bindings, and factory helpers (`Command::make`)
+  for the history commands. Cleaner, faster, less copying.
+- **Richer C/C++ syntax highlighting** — keywords stay cyan, `#include` /
+  `#define` / `static` get a violet-pink, builtin types (`int`, `char`,
+  `size_t`) get bright blue, and include filenames get pistachio green —
+  inspired by the tokyo-night palette, via custom RGB slots in the Nord
+  theme (with a safe fallback for 8/16-color terminals).
 
 ### Install the binary (no build required)
 
 ```bash
-curl -L -o vix-1.0.5-linux-x86_64.tar.gz \
-  https://github.com/Jadkeskes/vix-editor/releases/download/1.0.5/vix-1.0.5-linux-x86_64.tar.gz
-tar xzf vix-1.0.5-linux-x86_64.tar.gz
-sudo install -m755 vix-1.0.5-linux-x86_64/vix /usr/local/bin/
-vix --version   # → vix 1.0.5
+curl -L -o vix-1.0.6-linux-x86_64.tar.gz \
+  https://github.com/Jadkes/vix-editor/releases/download/1.0.6/vix-1.0.6-linux-x86_64.tar.gz
+tar xzf vix-1.0.6-linux-x86_64.tar.gz
+sudo install -m755 vix-1.0.6-linux-x86_64/vix /usr/local/bin/
+vix --version   # → vix 1.0.6
 ```
 
 ---
