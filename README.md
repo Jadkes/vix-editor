@@ -8,9 +8,9 @@ Vix is a **modeless** terminal text editor — like **nano** or **Emacs**, you j
 
 ## Screenshots
 
-![Vix with a single tab](assets/vix-screenshot-1.png)
-
 ![Vix with two tabs](assets/vix-screenshot-2.png)
+
+![Vix with a single tab](assets/vix-screenshot-1.png)
 
 ---
 
