@@ -41,6 +41,10 @@ class Buffer;
 class InsertCommand : public Command {
 public:
     InsertCommand(Buffer* buf, const std::string& text, int line, int col);
+    // Factory: the command borrows a Buffer the caller owns and outlives.
+    static CommandPtr make(Buffer& buf, std::string text, int line, int col) {
+        return std::make_unique<InsertCommand>(&buf, std::move(text), line, col);
+    }
     bool execute() override;
     bool undo() override;
     std::string description() const override;
@@ -54,6 +58,9 @@ private:
 class DeleteCommand : public Command {
 public:
     DeleteCommand(Buffer* buf, const std::string& text, int line, int col);
+    static CommandPtr make(Buffer& buf, std::string text, int line, int col) {
+        return std::make_unique<DeleteCommand>(&buf, std::move(text), line, col);
+    }
     bool execute() override;
     bool undo() override;
     std::string description() const override;
@@ -69,6 +76,9 @@ private:
 class PasteCommand : public Command {
 public:
     PasteCommand(Buffer* buf, const std::string& text, int line, int col);
+    static CommandPtr make(Buffer& buf, std::string text, int line, int col) {
+        return std::make_unique<PasteCommand>(&buf, std::move(text), line, col);
+    }
     bool execute() override;
     bool undo() override;
     std::string description() const override;
@@ -86,6 +96,9 @@ private:
 class DeleteRangeCommand : public Command {
 public:
     DeleteRangeCommand(Buffer* buf, int a_y, int a_x, int b_y, int b_x);
+    static CommandPtr make(Buffer& buf, int a_y, int a_x, int b_y, int b_x) {
+        return std::make_unique<DeleteRangeCommand>(&buf, a_y, a_x, b_y, b_x);
+    }
     bool execute() override;
     bool undo() override;
     std::string description() const override;
@@ -102,6 +115,13 @@ public:
     NewLineCommand(Buffer* buf, int insert_before_line,
                    const std::string& first_half, const std::string& second_half,
                    const std::string& orig_full_line);
+    static CommandPtr make(Buffer& buf, int insert_before_line,
+                           std::string first_half, std::string second_half,
+                           std::string orig_full_line) {
+        return std::make_unique<NewLineCommand>(&buf, insert_before_line,
+                                                std::move(first_half), std::move(second_half),
+                                                std::move(orig_full_line));
+    }
     bool execute() override;
     bool undo() override;
     std::string description() const override;

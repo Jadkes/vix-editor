@@ -17,7 +17,7 @@ TEST(HistoryTest, UndoStartsEmpty) {
 TEST(HistoryTest, ExecuteThenUndoRestoresBuffer) {
     History hist;
     Buffer buf;
-    hist.execute(std::make_unique<InsertCommand>(&buf, "hello", 0, 0));
+    hist.execute(InsertCommand::make(buf, "hello", 0, 0));
     EXPECT_EQ(buf[0], "hello");
     EXPECT_TRUE(hist.undo());
     EXPECT_EQ(buf[0], "");
@@ -26,7 +26,7 @@ TEST(HistoryTest, ExecuteThenUndoRestoresBuffer) {
 TEST(HistoryTest, RedoReappliesInsert) {
     History hist;
     Buffer buf;
-    hist.execute(std::make_unique<InsertCommand>(&buf, "hello", 0, 0));
+    hist.execute(InsertCommand::make(buf, "hello", 0, 0));
     hist.undo();
     EXPECT_EQ(buf[0], "");
     EXPECT_TRUE(hist.redo());
@@ -37,7 +37,7 @@ TEST(HistoryTest, InsertDeleteRoundTrip) {
     History hist;
     Buffer buf;
     buf.Insert(0, 0, "abcdef");
-    hist.execute(std::make_unique<DeleteCommand>(&buf, "bc", 0, 1));
+    hist.execute(DeleteCommand::make(buf, "bc", 0, 1));
     EXPECT_EQ(buf[0], "adef");
     hist.undo();
     EXPECT_EQ(buf[0], "abcdef");
@@ -48,17 +48,17 @@ TEST(HistoryTest, InsertDeleteRoundTrip) {
 TEST(HistoryTest, NewEditDiscardsRedo) {
     History hist;
     Buffer buf;
-    hist.execute(std::make_unique<InsertCommand>(&buf, "a", 0, 0));
+    hist.execute(InsertCommand::make(buf, "a", 0, 0));
     hist.undo();
-    hist.execute(std::make_unique<InsertCommand>(&buf, "b", 0, 0));
+    hist.execute(InsertCommand::make(buf, "b", 0, 0));
     EXPECT_FALSE(hist.redo());
 }
 
 TEST(HistoryTest, UndoAfterEditReturnsToEachState) {
     History hist;
     Buffer buf;
-    hist.execute(std::make_unique<InsertCommand>(&buf, "a", 0, 0));
-    hist.execute(std::make_unique<InsertCommand>(&buf, "b", 0, 1));
+    hist.execute(InsertCommand::make(buf, "a", 0, 0));
+    hist.execute(InsertCommand::make(buf, "b", 0, 1));
     EXPECT_EQ(buf[0], "ab");
     hist.undo();
     EXPECT_EQ(buf[0], "a");
@@ -78,7 +78,7 @@ TEST(HistoryTest, TrimKeepsOnlyMaxLevels) {
     History hist(3);
     Buffer buf;
     for (int i = 0; i < 10; i++)
-        hist.execute(std::make_unique<InsertCommand>(&buf, "x", 0, 0));
+        hist.execute(InsertCommand::make(buf, "x", 0, 0));
     // 10 undos available, but only the last 3 survive trimming.
     int undos = 0;
     while (hist.undo()) undos++;
@@ -89,7 +89,7 @@ TEST(HistoryTest, NewLineCommandSplitsAndUndoes) {
     History hist;
     Buffer buf;
     buf[0] = "hello";
-    hist.execute(std::make_unique<NewLineCommand>(&buf, 1, "hel", "lo", "hello"));
+    hist.execute(NewLineCommand::make(buf, 1, "hel", "lo", "hello"));
     EXPECT_EQ(buf.GetLineCount(), 2);
     EXPECT_EQ(buf[0], "hel");
     EXPECT_EQ(buf[1], "lo");
@@ -109,7 +109,7 @@ TEST(HistoryTest, PasteCommandSplicesMultiLine) {
     History hist;
     Buffer buf;
     buf[0] = "hello";
-    hist.execute(std::make_unique<PasteCommand>(&buf, "foo\nbar", 0, 2));
+    hist.execute(PasteCommand::make(buf, "foo\nbar", 0, 2));
     ASSERT_EQ(buf.GetLineCount(), 2);
     EXPECT_EQ(buf[0], "hefoo");
     EXPECT_EQ(buf[1], "barllo");
@@ -126,7 +126,7 @@ TEST(HistoryTest, PasteCommandSingleLineBehavesLikeInsert) {
     History hist;
     Buffer buf;
     buf[0] = "abcdef";
-    hist.execute(std::make_unique<PasteCommand>(&buf, "XY", 0, 2));
+    hist.execute(PasteCommand::make(buf, "XY", 0, 2));
     EXPECT_EQ(buf[0], "abXYcdef");
     hist.undo();
     EXPECT_EQ(buf[0], "abcdef");
@@ -136,7 +136,7 @@ TEST(HistoryTest, PasteCommandWithTrailingNewline) {
     History hist;
     Buffer buf;
     buf[0] = "one";
-    hist.execute(std::make_unique<PasteCommand>(&buf, "two\n", 0, 3));
+    hist.execute(PasteCommand::make(buf, "two\n", 0, 3));
     ASSERT_EQ(buf.GetLineCount(), 2);
     EXPECT_EQ(buf[0], "onetwo");
     EXPECT_EQ(buf[1], "");
@@ -149,7 +149,7 @@ TEST(HistoryTest, DeleteRangeSingleLine) {
     History hist;
     Buffer buf;
     buf[0] = "abcdef";
-    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 2, 0, 4));
+    hist.execute(DeleteRangeCommand::make(buf, 0, 2, 0, 4));
     EXPECT_EQ(buf[0], "abef");
     hist.undo();
     EXPECT_EQ(buf[0], "abcdef");
@@ -163,7 +163,7 @@ TEST(HistoryTest, DeleteRangeAcrossLines) {
     buf.PushBack("gamma");
     // From 'p' of alpha (col 2) to 'm' of gamma (col 2), exclusive of the end
     // cursor: removes "pha\nbeta\nga" and keeps "al" + "mma".
-    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 2, 2, 2));
+    hist.execute(DeleteRangeCommand::make(buf, 0, 2, 2, 2));
     ASSERT_EQ(buf.GetLineCount(), 1);
     EXPECT_EQ(buf[0], "almma");
     hist.undo();
@@ -178,7 +178,7 @@ TEST(HistoryTest, DeleteRangeReversedArguments) {
     Buffer buf;
     buf[0] = "abcdef";
     // Same span given in reverse order; normalization must handle it.
-    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 4, 0, 2));
+    hist.execute(DeleteRangeCommand::make(buf, 0, 4, 0, 2));
     EXPECT_EQ(buf[0], "abef");
     hist.undo();
     EXPECT_EQ(buf[0], "abcdef");
@@ -188,6 +188,6 @@ TEST(HistoryTest, DeleteRangeZeroWidthIsNoOp) {
     History hist;
     Buffer buf;
     buf[0] = "abcdef";
-    hist.execute(std::make_unique<DeleteRangeCommand>(&buf, 0, 3, 0, 3));
+    hist.execute(DeleteRangeCommand::make(buf, 0, 3, 0, 3));
     EXPECT_EQ(buf[0], "abcdef");
 }

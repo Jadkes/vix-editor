@@ -9,10 +9,14 @@
 #define VIX_SETTINGS_HPP
 
 #include <string>
+
+// Number of color pairs the editor registers (CP_DEFAULT .. CP_PREPROC).
+static constexpr int VIX_CP_COUNT = 18;
+
 struct Theme {
     std::string name;
-    int fg[16];
-    int bg[16];
+    int fg[VIX_CP_COUNT];
+    int bg[VIX_CP_COUNT];
 };
 
 extern const Theme themes[4];

@@ -11,27 +11,37 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <charconv>
 #include <cstdlib>
 #include <cctype>
 
 namespace fs = std::filesystem;
+
+// Custom RGB slots used by the Nord theme to match the Doom/tokyo-night
+// syntax palette. init_palette() defines them when the terminal has room;
+// ApplyTheme maps them to nearby basic colors on 8/16-color terminals.
+enum {
+    SLOT_TYPE      = 97,  // r=101,g=188,b=255  bright blue (int, size_t)
+    SLOT_DIRECTIVE = 98,  // r=212,g=160,b=234  violet-pink (#include, static)
+    SLOT_STRING    = 99   // r=195,g=232,b=141  pistachio green
+};
 
 const int THEME_COUNT = 4;
 const char* THEME_NAMES[4] = {"Monokai", "Dracula", "Nord", "Solarized Light"};
 
 const Theme themes[4] = {
     {"Monokai",
-     {7,5,3,8,8,7,1,6,7,8,0,8,7,4,1,3},
-     {-1,-1,-1,-1,-1,5,-1,-1,1,-1,3,-1,5,-1,-1,-1}},
+     {7,5,3,8,8,7,1,6,7,8,0,8,7,4,1,3,6,5},
+     {-1,-1,-1,-1,-1,5,-1,-1,1,-1,3,-1,5,-1,-1,-1,-1,-1}},
     {"Dracula",
-     {7,13,11,14,8,15,9,6,7,8,15,8,7,4,1,11},
-     {-1,-1,-1,-1,-1,13,-1,-1,1,-1,5,-1,5,-1,-1,-1}},
+     {7,13,11,14,8,15,9,6,7,8,15,8,7,4,1,11,6,13},
+     {-1,-1,-1,-1,-1,13,-1,-1,1,-1,5,-1,5,-1,-1,-1,-1,-1}},
     {"Nord",
-     {7,6,2,8,8,7,9,14,7,8,7,15,7,4,1,3},
-     {-1,-1,-1,-1,-1,4,-1,-1,1,-1,4,-1,6,-1,-1,-1}},
+     {7,6,SLOT_STRING,8,8,7,9,14,7,8,7,15,7,4,1,3,SLOT_TYPE,SLOT_DIRECTIVE},
+     {-1,-1,-1,-1,-1,4,-1,-1,1,-1,4,-1,6,-1,-1,-1,-1,-1}},
     {"Solarized Light",
-     {0,10,6,8,8,7,1,6,7,8,0,8,0,4,1,3},
-     {-1,-1,-1,-1,-1,12,-1,-1,1,-1,12,-1,6,-1,-1,-1}}
+     {0,10,6,8,8,7,1,6,7,8,0,8,0,4,1,3,6,4},
+     {-1,-1,-1,-1,-1,8,-1,-1,1,-1,8,-1,6,-1,-1,-1,-1,-1}}
 };
 
 static std::string ConfigPath() {
@@ -65,6 +75,12 @@ static std::string ParseVal(const std::string& s, size_t& i) {
     return val;
 }
 
+// Parse an integer into {out}; on malformed input the value is left untouched.
+static void from_chars_i(const std::string& s, int& out) {
+    auto [ptr, ec] = std::from_chars(s.data(), s.data() + s.size(), out);
+    (void)ptr; (void)ec;
+}
+
 void LoadSettings(Settings& s) {
     std::string path = ConfigPath();
     if (!fs::exists(path)) return;
@@ -87,12 +103,12 @@ void LoadSettings(Settings& s) {
         std::string val = ParseVal(text, i);
         SkipWS(text, i);
         if (i < end && text[i] == ',') i++;
-        if (key == "tab_width" && !val.empty() && val[0] != '"') { try { s.tab_width = std::stoi(val); if (s.tab_width < 1) s.tab_width = 2; } catch(...) {} }
-        else if (key == "auto_save_interval" && !val.empty() && val[0] != '"') { try { s.auto_save_interval = std::stoi(val); } catch(...) {} }
+        if (key == "tab_width" && !val.empty() && val[0] != '"') { from_chars_i(val, s.tab_width); if (s.tab_width < 1) s.tab_width = 2; }
+        else if (key == "auto_save_interval" && !val.empty() && val[0] != '"') { from_chars_i(val, s.auto_save_interval); }
         else if (key == "line_numbers") s.line_numbers = (val == "true");
         else if (key == "auto_indent") s.auto_indent = (val == "true");
-        else if (key == "theme" && !val.empty() && val[0] != '"') { try { int t = std::stoi(val); if (t >= 0 && t < THEME_COUNT) s.theme = t; } catch(...) {} }
-        else if (key == "default_language" && !val.empty() && val[0] != '"') { try { int l = std::stoi(val); if (l >= 0 && l <= 6) s.default_language = l; } catch(...) {} }
+        else if (key == "theme" && !val.empty() && val[0] != '"') { int t = -1; from_chars_i(val, t); if (t >= 0 && t < THEME_COUNT) s.theme = t; }
+        else if (key == "default_language" && !val.empty() && val[0] != '"') { int l = -1; from_chars_i(val, l); if (l >= 0 && l <= 6) s.default_language = l; }
         else if (key == "word_wrap") s.word_wrap = (val == "true");
     }
 }
@@ -114,8 +130,35 @@ void SaveSettings(const Settings& s) {
     f << "}\n";
 }
 
+// Define the custom RGB slots used by the Nord theme. Only valid once
+// start_color() has run; on terminals without 256 colors init_color fails
+// and ApplyTheme keeps using its basic-color fallback.
+static void init_palette() {
+    if (COLORS < 96) return;
+    // tokyo-night-inspired RGB triplets (0-1000 per channel).
+    init_color(SLOT_TYPE,    396, 737, 1000);  // #65bcff
+    init_color(SLOT_DIRECTIVE, 835, 666, 918); // #d5aaea
+    init_color(SLOT_STRING,  765, 910, 553);   // #c3e56d
+}
+
+// Map a theme fg index that survived ApplyTheme's palette to a usable basic
+// color on 8/16-color terminals, where the custom slots don't exist.
+static int palette_fallback(int fg) {
+    switch (fg) {
+        case SLOT_TYPE:      return 6;  // cyan
+        case SLOT_DIRECTIVE: return 5;  // magenta
+        case SLOT_STRING:    return 2;  // green
+    }
+    return fg;
+}
+
 void ApplyTheme(const Theme& t) {
-    for (int cp = 1; cp <= 16; cp++) init_pair(cp, t.fg[cp - 1], t.bg[cp - 1]);
+    init_palette();
+    for (int cp = 1; cp <= VIX_CP_COUNT; cp++) {
+        int fg = t.fg[cp - 1];
+        if (COLORS < 96) fg = palette_fallback(fg);
+        init_pair(cp, fg, t.bg[cp - 1]);
+    }
     bkgd(COLOR_PAIR(1));
     clearok(stdscr, TRUE);
 }

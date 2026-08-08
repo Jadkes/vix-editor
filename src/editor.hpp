@@ -9,7 +9,9 @@
 #pragma once
 #include <vector>
 #include <string>
+#include <string_view>
 #include <memory>
+#include <optional>
 #include <chrono>
 #include <filesystem>
 #include <regex>
@@ -21,7 +23,7 @@
 namespace fs = std::filesystem;
 
 #ifndef VIX_VERSION
-#define VIX_VERSION "1.0.5"
+#define VIX_VERSION "1.0.6"
 #endif
 #define VIX_NAME "vix"
 
@@ -41,6 +43,8 @@ namespace fs = std::filesystem;
 #define CP_DIR     14
 #define CP_TAR     15
 #define CP_JSON    16
+#define CP_TYPE    17
+#define CP_PREPROC 18
 
 // Width of the line-number gutter when enabled: 3 digit columns + 1 space.
 static constexpr int LINENUM_WIDTH = 4;
@@ -48,7 +52,12 @@ static constexpr int LINENUM_WIDTH = 4;
 struct SyntaxRules {
     int lang;
     std::string name;
+    // Control-flow and structural words (return, if, for, class).
     std::vector<std::string> keywords;
+    // Built-in type names (int, char, size_t, void).
+    std::vector<std::string> types;
+    // Preprocessor directives and storage classes (#include, define, static).
+    std::vector<std::string> directives;
 };
 
 struct Tab {
@@ -101,7 +110,7 @@ private:
     void find_match(Tab& tab);
     void find_all(Tab& tab, const std::string& q);
     std::regex build_regex(const std::string& q) const;
-    void plain_search(const std::string& line, int line_idx, const std::string& q);
+    void plain_search(std::string_view line, int line_idx, std::string_view q);
     void search_next(Tab& tab);
     void search_prev(Tab& tab);
     void replace_current(Tab& tab);
@@ -135,7 +144,9 @@ private:
     std::vector<SearchHit> search_results;
     int search_idx;
 
-    struct { int x, y; bool active; } match_pos;
+    // Cursor of the bracket matching the one under the cursor; nullopt once
+    // scanning (or the cursor) moves off a bracket.
+    std::optional<std::pair<int,int>> match_pos;
 
     Settings settings;
     std::chrono::steady_clock::time_point msg_time, last_save_time;
