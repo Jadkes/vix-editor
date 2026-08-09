@@ -1379,10 +1379,13 @@ void Editor::run() {
                         int clicked_idx = event.y - 2;
                         if (clicked_idx >= 0 && clicked_idx < (int)sidebar_paths.size())
                             sidebar_sel = clicked_idx;
-                    } else if (event.y == 0 && show_sidebar && event.x >= SIDEBAR_WIDTH) {
-                        int xpos = SIDEBAR_WIDTH + 1;
+                    } else if (event.y == 0) {
+                        // Tab-bar row: switch tabs only when a label is hit;
+                        // clicks anywhere else on row 0 are a no-op so the
+                        // cursor never teleports to line 0.
+                        int xpos = (show_sidebar ? SIDEBAR_WIDTH : 0) + 1;
                         for (size_t i = 0; i < tabs.size(); i++) {
-                            auto& t = *tabs[i];
+                            Tab& t = *tabs[i];
                             std::string label = t.buffer.GetFilename();
                             size_t slash = label.find_last_of("/\\");
                             if (slash != std::string::npos) label = label.substr(slash + 1);

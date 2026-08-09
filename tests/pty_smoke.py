@@ -253,7 +253,7 @@ def scenario_word_wrap(tmp):
     cfg = os.path.join(tmp, ".config", "vix")
     os.makedirs(cfg, exist_ok=True)
     with open(os.path.join(cfg, "settings.json"), "w") as f:
-        f.write('{\n    "word_wrap": true,\n    "line_numbers": false,\n}\n')
+        f.write('{\n    "word_wrap": true,\n    "line_numbers": false\n}\n')
 
     saved_home = os.environ.get("HOME")
     os.environ["HOME"] = tmp
