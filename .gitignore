@@ -9,6 +9,7 @@ run
 build/
 build-debug/
 build-release/
+build-notests/
 build-asan/
 build-clang/
 build-tests/
