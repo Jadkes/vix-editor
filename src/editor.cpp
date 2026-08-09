@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <termios.h>
 #include <cctype>
+#include <cwchar>
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -103,24 +104,125 @@ static bool is_word_char(char c) {
     return std::isalnum((unsigned char)c) || c == '_';
 }
 
-/* Word-aware wrap: given a line and a wrap width, return the column where each
- * visual segment starts (first entry is always 0). Each segment is at most
- * `text_w` columns, preferring to break after a space so words stay whole.
+/* Length in bytes of the UTF-8 codepoint starting at line[i]. Returns 1 for
+ * ASCII, a lone continuation byte, or a truncated sequence (the renderer and
+ * the column math then both treat it as one 1-col cell so nothing drifts).
  */
-static std::vector<int> wrap_starts(std::string_view line, int text_w) {
+static int utf8_seq_len(const std::string& line, int i) {
+    unsigned char c0 = (unsigned char)line[i];
+    if (c0 < 0xC0) return 1;
+    int want = (c0 & 0xE0) == 0xC0 ? 2 : (c0 & 0xF0) == 0xE0 ? 3 : 4;
+    for (int k = 1; k < want; k++) {
+        int b = i + k;
+        if (b >= (int)line.size() || ((unsigned char)line[b] & 0xC0) != 0x80) return k;
+    }
+    return want;
+}
+
+/* Decode the n-byte UTF-8 sequence at line[i] into a wchar_t. Callers only
+ * invoke this for valid sequences (n > 1). */
+static wchar_t utf8_decode(const std::string& line, int i, int n) {
+    if (n == 2) return ((((unsigned char)line[i]) & 0x1F) << 6) | (((unsigned char)line[i+1]) & 0x3F);
+    if (n == 3) return ((((unsigned char)line[i]) & 0x0F) << 12) |
+                      ((((unsigned char)line[i+1]) & 0x3F) << 6) |
+                      (((unsigned char)line[i+2]) & 0x3F);
+    return ((((unsigned char)line[i]) & 0x07) << 18) |
+           ((((unsigned char)line[i+1]) & 0x3F) << 12) |
+           ((((unsigned char)line[i+2]) & 0x3F) << 6) |
+           (((unsigned char)line[i+3]) & 0x3F);
+}
+
+/* Display columns a single codepoint at line[i] occupies, given the display
+ * column already consumed (`cur_col`, the base for tab stops). Tabs advance
+ * to the next multiple of tab_width; other chars count their wcwidth (with a
+ * 1-cell floor so combining marks never collapse a row). */
+static int codepoint_cols(const std::string& line, int i, int cur_col, int tab_width) {
+    unsigned char c0 = (unsigned char)line[i];
+    if (c0 == '\t') {
+        int tw = tab_width > 0 ? tab_width : 1;
+        return tw - (cur_col % tw);
+    }
+    if (c0 < 0x80) return 1;
+    int n = utf8_seq_len(line, i);
+    if (n == 1) return 1;
+    int w = wcwidth(utf8_decode(line, i, n));
+    return w > 0 ? w : 1;
+}
+
+/* Display column of the byte index `byte` in `line`, counting tab stops from
+ * column 0. */
+static int byte_to_disp(const std::string& line, int byte, int tab_width) {
+    int col = 0;
+    int n = std::min(std::max(byte, 0), (int)line.size());
+    for (int i = 0; i < n; ) {
+        col += codepoint_cols(line, i, col, tab_width);
+        i += utf8_seq_len(line, i);
+    }
+    return col;
+}
+
+/* Byte index whose display column is at least `disp`, clamped to the line
+ * length. Maps a clicked screen column back to a buffer column. */
+static int disp_to_byte(const std::string& line, int disp, int tab_width) {
+    int col = 0;
+    int n = (int)line.size();
+    for (int i = 0; i < n; ) {
+        if (disp <= col) return i;
+        col += codepoint_cols(line, i, col, tab_width);
+        i += utf8_seq_len(line, i);
+    }
+    return n;
+}
+
+/* Display columns between bytes [from, to) in `line`, with tab stops counted
+ * from column 0 at `from` (i.e., reset per wrapped segment, matching render). */
+static int disp_between(const std::string& line, int from, int to, int tab_width) {
+    int col = 0;
+    int n = std::min(std::max(to, 0), (int)line.size());
+    for (int i = std::max(from, 0); i < n; ) {
+        col += codepoint_cols(line, i, col, tab_width);
+        i += utf8_seq_len(line, i);
+    }
+    return col;
+}
+
+/* Byte index reaching display column `disp` measured from the codepoint at
+ * `from` (tab stops reset at `from`); clamped to the line length. */
+static int disp_byte_from(const std::string& line, int from, int disp, int tab_width) {
+    int col = 0;
+    int n = (int)line.size();
+    for (int i = std::max(from, 0); i < n; ) {
+        if (disp <= col) return i;
+        col += codepoint_cols(line, i, col, tab_width);
+        i += utf8_seq_len(line, i);
+    }
+    return n;
+}
+
+/* Word-aware, display-column wrap: returns the byte offset where each visual
+ * segment starts (first entry is always 0). Each segment is at most `text_w`
+ * columns, preferring to break after a space so words stay whole. */
+static std::vector<int> wrap_starts(const std::string& line, int text_w, int tab_width) {
     std::vector<int> starts;
-    int len = (int)line.length();
     if (text_w < 1) text_w = 1;
     starts.push_back(0);
+    int n = (int)line.size();
     int pos = 0;
-    while (len - pos > text_w) {
-        int end = pos + text_w;
-        size_t sp_raw = line.rfind(' ', end - 1);
-        if (sp_raw != std::string::npos) {
-            int sp = (int)sp_raw;
-            if (sp >= pos) end = sp + 1;
+    while (pos < n) {
+        int col = 0;
+        int i = pos;
+        int last_space = -1;
+        while (i < n) {
+            int ccol = codepoint_cols(line, i, col, tab_width);
+            if (col + ccol > text_w) break;
+            col += ccol;
+            if (line[i] == ' ') last_space = i + 1;
+            i += utf8_seq_len(line, i);
         }
-        if (end <= pos) end = pos + 1;
+        if (i >= n) break;
+        int end = i;
+        if (last_space >= 0 && last_space > pos) end = last_space;
+        if (end <= pos) end = pos + utf8_seq_len(line, pos);
         starts.push_back(end);
         pos = end;
     }
@@ -362,16 +464,19 @@ void Editor::screen_to_buffer(int ey, int ex, Tab& tab, int& line, int& col) {
         }
         if (line_idx >= tab.buffer.GetLineCount()) line_idx = tab.buffer.GetLineCount() - 1;
         line = line_idx;
-        auto starts = wrap_starts(tab.buffer[line], text_w);
+        auto starts = wrap_starts(tab.buffer[line], text_w, settings.tab_width);
         int seg_in_line = std::clamp(clicked_y - vis, 0, (int)starts.size() - 1);
-        int cx = ex - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
-        col = std::clamp(starts[seg_in_line] + std::max(0, cx), 0, (int)tab.buffer[line].length());
+        int cx = std::max(0, ex - sw - (settings.line_numbers ? LINENUM_WIDTH : 0));
+        col = std::clamp(disp_byte_from(tab.buffer[line], starts[seg_in_line], cx, settings.tab_width),
+                         0, (int)tab.buffer[line].length());
     } else {
         line = clicked_y + tab.v_scroll;
         if (line < 0) line = 0;
         if (line >= tab.buffer.GetLineCount()) line = tab.buffer.GetLineCount() - 1;
-        int cx = ex - sw - (settings.line_numbers ? LINENUM_WIDTH : 0) + tab.h_scroll;
-        col = std::clamp(cx, 0, (int)tab.buffer[line].length());
+        int cx = std::max(0, ex - sw - (settings.line_numbers ? LINENUM_WIDTH : 0));
+        int scroll_disp = byte_to_disp(tab.buffer[line], tab.h_scroll, settings.tab_width);
+        col = std::clamp(disp_to_byte(tab.buffer[line], scroll_disp + cx, settings.tab_width),
+                         0, (int)tab.buffer[line].length());
     }
 }
 
@@ -978,7 +1083,30 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
         }
     }
     int cur_x = sw + (settings.line_numbers ? LINENUM_WIDTH : 0);
+    const int cur_origin = cur_x;
     int i = start_col;
+    // Render one codepoint at line[cur_byte]: tabs expand to spaces up to the
+    // next tab stop, UTF-8 bytes decode and emit as a wide char. Advances
+    // cur_byte by the byte length and cur_col by the display width.
+    auto emit = [&](int& cur_byte, int& cur_col) {
+        unsigned char c0 = (unsigned char)line[cur_byte];
+        int n = utf8_seq_len(line, cur_byte);
+        if (c0 == '\t') {
+            int tw = settings.tab_width > 0 ? settings.tab_width : 1;
+            int rel = cur_col - cur_origin;
+            int cells = tw - (rel % tw);
+            if (cur_col + cells > max_x) cells = std::max(1, max_x - cur_col);
+            for (int k = 0; k < cells; k++) addch(' ');
+            cur_col += cells;
+            cur_byte += 1;
+            return;
+        }
+        if (n == 1) { addch(line[cur_byte]); cur_col += 1; cur_byte += 1; return; }
+        wchar_t wc = utf8_decode(line, cur_byte, n);
+        addnwstr(&wc, 1);
+        cur_col += codepoint_cols(line, cur_byte, cur_col - cur_origin, settings.tab_width);
+        cur_byte += n;
+    };
     while (i < end_col && cur_x < max_x) {
         bool is_search_start = false;
         int search_hit_len = 0;
@@ -997,10 +1125,8 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
         if (is_search_start) {
             int cp = (search_hit_idx == search_idx) ? CP_MATCH : CP_SEARCH;
             attron(COLOR_PAIR(cp));
-            for (int j = 0; j < search_hit_len && i + j < end_col && cur_x < max_x; j++) {
-                addch(line[i + j]); cur_x++;
-            }
-            i += search_hit_len;
+            int hit_end = std::min(i + search_hit_len, end_col);
+            while (i < hit_end && cur_x < max_x) emit(i, cur_x);
             attroff(COLOR_PAIR(cp));
             continue;
         }
@@ -1020,44 +1146,42 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
 
         if (c == '"' || c == '\'') {
             attron(COLOR_PAIR(CP_STRING));
-            sel_attr(i); addch(c); cur_x++; i++;
+            sel_attr(i); emit(i, cur_x);
             while (i < end_col && cur_x < max_x) {
-                sel_attr(i); addch(line[i]); cur_x++;
-                if (line[i] == c && (i == 0 || line[i-1] != '\\')) break;
-                i++;
+                bool closing = (line[i] == c && (i == 0 || line[i-1] != '\\'));
+                sel_attr(i); emit(i, cur_x);
+                if (closing) break;
             }
-            i++;
             attroff(COLOR_PAIR(CP_STRING));
         } else if (is_c_cpp && tab.in_block_comment) {
             attron(COLOR_PAIR(CP_COMMENT));
             while (i < end_col && cur_x < max_x) {
                 if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
-                    sel_attr(i); addch(line[i]); cur_x++; i++;
-                    sel_attr(i); addch(line[i]); cur_x++; i++;
+                    sel_attr(i); emit(i, cur_x);
+                    sel_attr(i); emit(i, cur_x);
                     tab.in_block_comment = false;
                     break;
                 }
-                sel_attr(i); addch(line[i]); cur_x++; i++;
+                sel_attr(i); emit(i, cur_x);
             }
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '/' && i+1 < (int)line.length() && line[i+1] == '/') {
             attron(COLOR_PAIR(CP_COMMENT));
-            while (i < end_col && cur_x < max_x) { sel_attr(i); addch(line[i]); cur_x++; i++; }
+            while (i < end_col && cur_x < max_x) { sel_attr(i); emit(i, cur_x); }
             attroff(COLOR_PAIR(CP_COMMENT));
         } else if (is_c_cpp && c == '/' && i+1 < (int)line.length() && line[i+1] == '*') {
             attron(COLOR_PAIR(CP_COMMENT));
-            sel_attr(i); addch(line[i]); cur_x++; i++;
-            sel_attr(i); addch(line[i]); cur_x++; i++;
+            sel_attr(i); emit(i, cur_x);
+            sel_attr(i); emit(i, cur_x);
             bool closed = false;
             while (i < end_col && cur_x < max_x) {
-                sel_attr(i); addch(line[i]); cur_x++;
                 if (line[i] == '*' && i+1 < (int)line.length() && line[i+1] == '/') {
-                    i++;
-                    sel_attr(i); addch(line[i]); cur_x++;
+                    sel_attr(i); emit(i, cur_x);
+                    sel_attr(i); emit(i, cur_x);
                     closed = true;
                     break;
                 }
-                i++;
+                sel_attr(i); emit(i, cur_x);
             }
             if (!closed) tab.in_block_comment = true;
             attroff(COLOR_PAIR(CP_COMMENT));
@@ -1065,10 +1189,10 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
             // Preprocessor directive: the "#keyword" word in the directive
             // color, then a #include <foo>/"foo" filename in the string color.
             attron(COLOR_PAIR(CP_PREPROC));
-            sel_attr(i); addch(c); cur_x++; i++;
+            sel_attr(i); emit(i, cur_x);
             while (i < end_col && cur_x < max_x &&
                    (std::isalnum((unsigned char)line[i]) || line[i] == '_')) {
-                sel_attr(i); addch(line[i]); cur_x++; i++;
+                sel_attr(i); emit(i, cur_x);
             }
             attroff(COLOR_PAIR(CP_PREPROC));
             if (i < end_col && cur_x < max_x &&
@@ -1076,18 +1200,21 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
                 char c0 = line[i];
                 attron(COLOR_PAIR(CP_STRING));
                 while (i < end_col && cur_x < max_x) {
-                    sel_attr(i); addch(line[i]); cur_x++;
-                    if (line[i] == c0 || (c0 == '<' && line[i] == '>')) { i++; break; }
-                    i++;
+                    bool closing = (line[i] == c0 || (c0 == '<' && line[i] == '>'));
+                    sel_attr(i); emit(i, cur_x);
+                    if (closing) break;
                 }
                 attroff(COLOR_PAIR(CP_STRING));
             }
-            while (i < end_col && cur_x < max_x) { sel_attr(i); addch(line[i]); cur_x++; i++; }
+            while (i < end_col && cur_x < max_x) { sel_attr(i); emit(i, cur_x); }
         } else if (std::isdigit((unsigned char)c)) {
             attron(COLOR_PAIR(CP_ORANGE));
-            sel_attr(i); addch(c); cur_x++; i++;
+            sel_attr(i); emit(i, cur_x);
             attroff(COLOR_PAIR(CP_ORANGE));
         } else if (std::isalpha((unsigned char)c) || c == '_') {
+            // Words are ASCII (the loop collects alnum/_ only), so the
+            // collected bytes are emitted at their original offsets while i
+            // is left pointing at the first non-word char.
             int wstart = i;
             std::string w;
             while (i < end_col && (std::isalnum((unsigned char)line[i]) || line[i] == '_')) w += line[i++];
@@ -1105,7 +1232,7 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
             }
             attroff(COLOR_PAIR(CP_TYPE) | COLOR_PAIR(CP_PREPROC) | COLOR_PAIR(CP_KEYWORD) | A_BOLD | COLOR_PAIR(CP_CYAN));
         } else {
-            sel_attr(i); addch(c); cur_x++; i++;
+            sel_attr(i); emit(i, cur_x);
         }
         if (is_match) attroff(COLOR_PAIR(CP_MATCH));
     }
@@ -1193,13 +1320,13 @@ void Editor::draw() {
 int Editor::wrap_rows(int buf_idx, int text_w, Tab& tab) const {
     if (!settings.word_wrap) return 1;
     if (buf_idx < 0 || buf_idx >= tab.buffer.GetLineCount()) return 1;
-    return (int)wrap_starts(tab.buffer[buf_idx], text_w).size();
+    return (int)wrap_starts(tab.buffer[buf_idx], text_w, settings.tab_width).size();
 }
 
 int Editor::wrap_col(int buf_idx, int seg, int text_w, Tab& tab) const {
     if (!settings.word_wrap) return 0;
     if (buf_idx < 0 || buf_idx >= tab.buffer.GetLineCount()) return 0;
-    auto starts = wrap_starts(tab.buffer[buf_idx], text_w);
+    auto starts = wrap_starts(tab.buffer[buf_idx], text_w, settings.tab_width);
     if (seg < 0) seg = 0;
     if (seg >= (int)starts.size()) seg = (int)starts.size() - 1;
     return starts[seg];
@@ -1222,16 +1349,19 @@ void Editor::place_cursor(int my, int mx, Tab& tab) {
         if (text_w < 1) text_w = 1;
         int vis = 0;
         for (int li = tab.v_scroll; li < tab.y; li++) vis += wrap_rows(li, text_w, tab);
-        auto starts = wrap_starts(tab.buffer[tab.y], text_w);
+        auto starts = wrap_starts(tab.buffer[tab.y], text_w, settings.tab_width);
         int seg = 0;
         for (int s = 0; s < (int)starts.size(); s++) if (starts[s] <= tab.x) seg = s; else break;
         vis += seg - tab.v_seg;
         int cy = std::clamp(vis + 1, 1, my - 2);
-        int cx = std::clamp(tab.x - starts[seg] + sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
+        int cx = std::clamp(disp_between(tab.buffer[tab.y], starts[seg], tab.x, settings.tab_width) +
+                               sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
         move(cy, cx);
     } else {
         int cy = std::clamp(tab.y - tab.v_scroll + 1, 1, my - 2);
-        int cx = std::clamp(tab.x - tab.h_scroll + sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
+        int cx = std::clamp(byte_to_disp(tab.buffer[tab.y], tab.x, settings.tab_width) -
+                               byte_to_disp(tab.buffer[tab.y], tab.h_scroll, settings.tab_width) +
+                               sw + (settings.line_numbers ? LINENUM_WIDTH : 0), 0, mx - 1);
         move(cy, cx);
     }
 }
@@ -1296,7 +1426,7 @@ void Editor::run() {
             for (int li = tab.v_scroll; li < tab.y; li++) cursor_row += wrap_rows(li, text_w, tab);
             cursor_row -= tab.v_seg;
             int row_in_line = 0;
-            auto starts = wrap_starts(tab.buffer[tab.y], text_w);
+            auto starts = wrap_starts(tab.buffer[tab.y], text_w, settings.tab_width);
             for (int s = 0; s < (int)starts.size(); s++) if (starts[s] <= tab.x) row_in_line = s; else break;
             cursor_row += row_in_line;
             if (cursor_row < 0) { tab.v_scroll = tab.y; tab.v_seg = 0; }
@@ -1319,8 +1449,10 @@ void Editor::run() {
             if (tab.y < tab.v_scroll) tab.v_scroll = tab.y;
             if (tab.y >= tab.v_scroll + my - 2) tab.v_scroll = tab.y - (my - 2) + 1;
             if (tab.h_scroll < 0) tab.h_scroll = 0;
-            if (tab.x < tab.h_scroll) tab.h_scroll = tab.x;
-            if (tab.x >= tab.h_scroll + text_w) tab.h_scroll = tab.x - text_w + 1;
+            int x_disp = byte_to_disp(tab.buffer[tab.y], tab.x, settings.tab_width);
+            int scroll_disp = byte_to_disp(tab.buffer[tab.y], tab.h_scroll, settings.tab_width);
+            if (x_disp < scroll_disp) tab.h_scroll = disp_to_byte(tab.buffer[tab.y], x_disp, settings.tab_width);
+            if (x_disp >= scroll_disp + text_w) tab.h_scroll = disp_to_byte(tab.buffer[tab.y], x_disp - text_w + 1, settings.tab_width);
         }
 
         // Pure cursor moves repaint only the status row and cursor instead of

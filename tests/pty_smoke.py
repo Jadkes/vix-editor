@@ -282,6 +282,100 @@ def scenario_word_wrap(tmp):
             os.environ["HOME"] = saved_home
 
 
+def strip_ansi(data):
+    """Remove SGR/CSI/OSC escape sequences, leaving the plain cell text."""
+    out = bytearray()
+    i = 0
+    n = len(data)
+    while i < n:
+        if data[i] == 0x1B and i + 1 < n:
+            if data[i + 1] == 0x5B:  # CSI: \x1b[ ...letter
+                i += 2
+                while i < n and not (0x40 <= data[i] <= 0x7E):
+                    i += 1
+                i += 1
+                continue
+            if data[i + 1] == 0x5D:  # OSC: \x1b]4;...\x1b\\ styled pair
+                i += 2
+                while i < n and not (data[i] == 0x1B and i + 1 < n and data[i + 1] == 0x5C):
+                    i += 1
+                i += 2
+                continue
+            if data[i + 1] == 0x28 or data[i + 1] == 0x29:  # charset select \x1b(0 / \x1b(B
+                i += 2
+                if i < n:
+                    i += 1
+                continue
+            if data[i + 1] == 0x3D:  # keypad \x1b=
+                i += 2
+                continue
+            if data[i + 1] == 0x7E:  # \x1b~ (cursor save/restore family)
+                i += 2
+                continue
+            out.append(data[i])
+            i += 1
+            continue
+        out.append(data[i])
+        i += 1
+    return bytes(out)
+
+
+def scenario_unicode_tab(tmp):
+    """Tabs expand to spaces and UTF-8 renders as one wide char (no mojibake).
+
+    Text: a tab, ASCII, an accented char (e<U+00E9>, 2 bytes) and a CJK
+    ideograph (U+4E2D, 3 bytes, wcwidth 2). The pty must receive the original
+    UTF-8 codepoints - not one byte per column - and the tab must widen to its
+    tab stop. ANSI SGR sequences are stripped before matching because ncurses
+    interleaves attribute codes around wide chars.
+    """
+    fpath = os.path.join(tmp, "uni.txt")
+    with open(fpath, "wb") as f:
+        f.write(b"\tCAF" + "\u00e9".encode("utf-8") + b" " + "\u4e2d".encode("utf-8") + b"\n")
+
+    cfg = os.path.join(tmp, ".config", "vix")
+    os.makedirs(cfg, exist_ok=True)
+    with open(os.path.join(cfg, "settings.json"), "w") as f:
+        f.write('{\n    "line_numbers": false\n}\n')
+
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = tmp
+    try:
+        pid, fd = spawn(sys.argv[1], tmp, fpath)
+        try:
+            # Poll until the first frame has painted the line (the 0.8s fixed
+            # window raced with the first redraw under load).
+            end = time.time() + WAIT_TIMEOUT
+            out = b""
+            while time.time() < end:
+                out += drain(fd, 0.15)
+                if b"\xe4\xb8\xad" not in strip_ansi(out):
+                    time.sleep(0.05)
+                    continue
+                break
+            clean = strip_ansi(out)
+            # Correct UTF-8 must survive: "Caf" + e-acute (C3 A9), then 中.
+            if b"CAF\xc3\xa9" not in clean:
+                return "accented char not emitted as UTF-8: %r" % out[-200:]
+            if b"\xe4\xb8\xad" not in clean:
+                return "CJK char missing from output: %r" % out[-200:]
+            # The leading tab must widen to its stop (default 4). Empty cols
+            # before "CAF" means the tab expanded to spaces, not mojibake.
+            if b"    CAF\xc3\xa9" not in clean:
+                return "tab not expanded to 4 spaces: %r" % out[-300:]
+            status = clean_quit(fd, pid)
+            if exit_code(status) != 0:
+                return "exit code %r after unicode render" % exit_code(status)
+            return None
+        finally:
+            os.close(fd)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
 def scenario_session_resume(tmp):
     """A previous session (files + cwd) is reopened by --resume."""
     cfg = os.path.join(tmp, ".config", "vix")
@@ -455,6 +549,7 @@ def main():
         ("crlf_roundtrip", scenario_crlf_roundtrip),
         ("save_as", scenario_save_as),
         ("word_wrap", scenario_word_wrap),
+        ("unicode_tab", scenario_unicode_tab),
         ("session_resume", scenario_session_resume),
         ("session_roundtrip", scenario_session_roundtrip),
         ("mouse_selection", scenario_mouse_selection),
