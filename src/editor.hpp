@@ -23,7 +23,7 @@
 namespace fs = std::filesystem;
 
 #ifndef VIX_VERSION
-#define VIX_VERSION "1.0.6"
+#define VIX_VERSION "1.0.7"
 #endif
 #define VIX_NAME "vix"
 
