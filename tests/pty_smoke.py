@@ -520,6 +520,50 @@ def scenario_session_roundtrip(tmp):
             os.environ["HOME"] = saved_home
 
 
+def scenario_active_line_gutter(tmp):
+    """The active line's number renders bold in the soft-amber slot.
+
+    Default theme 0 (Monokai) maps CP_CURLINE to the RGB slot 100; on a
+    256-color pty that shows up as an SGR 38;5;100 sequence on the cursor
+    line's gutter. Grep the raw stream for it after moving down a few rows.
+    """
+    fpath = os.path.join(tmp, "gut.txt")
+    with open(fpath, "w") as f:
+        f.write("".join("line %d\n" % i for i in range(12)))
+
+    cfg = os.path.join(tmp, ".config", "vix")
+    os.makedirs(cfg, exist_ok=True)
+    with open(os.path.join(cfg, "settings.json"), "w") as f:
+        f.write('{\n    "line_numbers": true,\n    "theme": 0\n}\n')
+
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = tmp
+    try:
+        pid, fd = spawn(sys.argv[1], tmp, fpath)
+        try:
+            time.sleep(0.4)
+            out = drain(fd, 0.3)
+            if b"38;5;100" not in out:
+                return "amber active-line SGR missing: %r" % out[:300]
+            # Move down; the color must follow to the new active row.
+            os.write(fd, b"\x1bOB")
+            time.sleep(0.2)
+            out2 = drain(fd, 0.3)
+            if b"38;5;100" not in out2:
+                return "amber SGR lost after cursor move"
+            status = clean_quit(fd, pid)
+            if exit_code(status) != 0:
+                return "exit code %r after gutter color" % exit_code(status)
+            return None
+        finally:
+            os.close(fd)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
 def scenario_mouse_selection(tmp):
     """Drag with the mouse selects a span; ^C copies it and ^K cuts it.
 
@@ -603,6 +647,7 @@ def main():
         ("session_resume", scenario_session_resume),
         ("session_roundtrip", scenario_session_roundtrip),
         ("mouse_selection", scenario_mouse_selection),
+        ("active_line_gutter", scenario_active_line_gutter),
     ]
 
     failures = 0

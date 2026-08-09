@@ -10,8 +10,8 @@
 
 #include <string>
 
-// Number of color pairs the editor registers (CP_DEFAULT .. CP_PREPROC).
-static constexpr int VIX_CP_COUNT = 18;
+// Number of color pairs the editor registers (CP_DEFAULT .. CP_CURLINE).
+static constexpr int VIX_CP_COUNT = 19;
 
 struct Theme {
     std::string name;

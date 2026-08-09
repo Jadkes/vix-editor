@@ -23,7 +23,8 @@ namespace fs = std::filesystem;
 enum {
     SLOT_TYPE      = 97,  // r=101,g=188,b=255  bright blue (int, size_t)
     SLOT_DIRECTIVE = 98,  // r=212,g=160,b=234  violet-pink (#include, static)
-    SLOT_STRING    = 99   // r=195,g=232,b=141  pistachio green
+    SLOT_STRING    = 99,  // r=195,g=232,b=141  pistachio green
+    SLOT_CURLINE   = 100  // r=255,g=200,b=150  soft amber (active line number)
 };
 
 const int THEME_COUNT = 4;
@@ -31,17 +32,17 @@ const char* THEME_NAMES[4] = {"Monokai", "Dracula", "Nord", "Solarized Light"};
 
 const Theme themes[4] = {
     {"Monokai",
-     {7,5,3,8,8,7,1,6,7,8,0,8,7,4,1,3,6,5},
-     {-1,-1,-1,-1,-1,5,-1,-1,1,-1,3,-1,5,-1,-1,-1,-1,-1}},
+     {7,5,3,8,8,7,1,6,7,8,0,8,7,4,1,3,6,5,SLOT_CURLINE},
+     {-1,-1,-1,-1,-1,5,-1,-1,1,-1,3,-1,5,-1,-1,-1,-1,-1,-1}},
     {"Dracula",
-     {7,13,11,14,8,15,9,6,7,8,15,8,7,4,1,11,6,13},
-     {-1,-1,-1,-1,-1,13,-1,-1,1,-1,5,-1,5,-1,-1,-1,-1,-1}},
+     {7,13,11,14,8,15,9,6,7,8,15,8,7,4,1,11,6,13,SLOT_CURLINE},
+     {-1,-1,-1,-1,-1,13,-1,-1,1,-1,5,-1,5,-1,-1,-1,-1,-1,-1}},
     {"Nord",
-     {7,6,SLOT_STRING,8,8,7,9,14,7,8,7,15,7,4,1,3,SLOT_TYPE,SLOT_DIRECTIVE},
-     {-1,-1,-1,-1,-1,4,-1,-1,1,-1,4,-1,6,-1,-1,-1,-1,-1}},
+     {7,6,SLOT_STRING,8,8,7,9,14,7,8,7,15,7,4,1,3,SLOT_TYPE,SLOT_DIRECTIVE,SLOT_CURLINE},
+     {-1,-1,-1,-1,-1,4,-1,-1,1,-1,4,-1,6,-1,-1,-1,-1,-1,-1}},
     {"Solarized Light",
-     {0,10,6,8,8,7,1,6,7,8,0,8,0,4,1,3,6,4},
-     {-1,-1,-1,-1,-1,8,-1,-1,1,-1,8,-1,6,-1,-1,-1,-1,-1}}
+     {0,10,6,8,8,7,1,6,7,8,0,8,0,4,1,3,6,4,SLOT_CURLINE},
+     {-1,-1,-1,-1,-1,8,-1,-1,1,-1,8,-1,6,-1,-1,-1,-1,-1,-1}}
 };
 
 static std::string ConfigPath() {
@@ -139,6 +140,7 @@ static void init_palette() {
     init_color(SLOT_TYPE,    396, 737, 1000);  // #65bcff
     init_color(SLOT_DIRECTIVE, 835, 666, 918); // #d5aaea
     init_color(SLOT_STRING,  765, 910, 553);   // #c3e56d
+    init_color(SLOT_CURLINE, 1000, 546, 290);  // #ff9c40
 }
 
 // Map a theme fg index that survived ApplyTheme's palette to a usable basic
@@ -148,6 +150,7 @@ static int palette_fallback(int fg) {
         case SLOT_TYPE:      return 6;  // cyan
         case SLOT_DIRECTIVE: return 5;  // magenta
         case SLOT_STRING:    return 2;  // green
+        case SLOT_CURLINE:   return 3;  // yellow
     }
     return fg;
 }

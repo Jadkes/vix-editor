@@ -1074,9 +1074,15 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
     if (start_col < 0) start_col = 0;
     if (start_col > (int)line.length()) start_col = (int)line.length();
     if (settings.line_numbers) {
-        attron(COLOR_PAIR(CP_LINENUM));
+        // The active line's number gets the soft-amber, bolded detail so the
+        // cursor line stands out in the gutter without touching the text.
+        bool cur = (buf_idx == tab.y);
+        int cp = cur ? CP_CURLINE : CP_LINENUM;
+        attron(COLOR_PAIR(cp));
+        if (cur) attron(A_BOLD);
         mvprintw(row, sw, "%3d ", buf_idx + 1);
-        attroff(COLOR_PAIR(CP_LINENUM));
+        if (cur) attroff(A_BOLD);
+        attroff(COLOR_PAIR(cp));
     }
     // Column range of this line covered by an active mouse selection, if any.
     int sel_lo = -1, sel_hi = -1;
@@ -1421,6 +1427,7 @@ void Editor::run() {
     bool drawn_match_active = false;
     int drawn_match_x = 0, drawn_match_y = 0;
     int drawn_vs = -1, drawn_hs = -1;
+    int drawn_active_y = -1;
 
     while (running) {
         int my, mx;
@@ -1480,11 +1487,13 @@ void Editor::run() {
         // or the match highlight takes the full redraw path below.
         bool match_changed = (match_pos.has_value() != drawn_match_active) ||
                              (match_pos.has_value() && (match_pos->first != drawn_match_x || match_pos->second != drawn_match_y));
-        if (redraw || match_changed || tab.v_scroll != drawn_vs || tab.h_scroll != drawn_hs) {
+        bool active_line_changed = (tab.y != drawn_active_y);
+        if (redraw || match_changed || active_line_changed || tab.v_scroll != drawn_vs || tab.h_scroll != drawn_hs) {
             draw();
             redraw = false;
             drawn_vs = tab.v_scroll;
             drawn_hs = tab.h_scroll;
+            drawn_active_y = tab.y;
             drawn_match_active = match_pos.has_value();
             drawn_match_x = match_pos.has_value() ? match_pos->first : 0;
             drawn_match_y = match_pos.has_value() ? match_pos->second : 0;

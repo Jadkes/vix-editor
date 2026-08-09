@@ -45,6 +45,7 @@ namespace fs = std::filesystem;
 #define CP_JSON    16
 #define CP_TYPE    17
 #define CP_PREPROC 18
+#define CP_CURLINE 19
 
 // Width of the line-number gutter when enabled: 3 digit columns + 1 space.
 static constexpr int LINENUM_WIDTH = 4;
