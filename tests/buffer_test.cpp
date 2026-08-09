@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <fstream>
 #include <iterator>
-#include <unistd.h>
 
 TEST(BufferTest, DefaultConstruction) {
     Buffer buf;
@@ -93,6 +92,13 @@ TEST(BufferTest, InsertTextClampsOutOfRange) {
     EXPECT_EQ(buf.GetLineCount(), 1);
 }
 
+TEST(BufferTest, InsertRejectsEmbeddedNewline) {
+    Buffer buf;
+    buf.Insert(0, 0, "a\nb");
+    EXPECT_EQ(buf[0], "");
+    EXPECT_EQ(buf.GetLineCount(), 1);
+}
+
 TEST(BufferTest, DeleteText) {
     Buffer buf;
     buf.Insert(0, 0, "abcdef");
@@ -146,8 +152,8 @@ namespace {
 // Write bytes to a temp file and return its path. The caller owns cleanup.
 std::string WriteTemp(const std::string& contents) {
     static int counter = 0;
-    std::string path = "/tmp/vix_buffer_test_" + std::to_string(::getpid()) +
-                       "_" + std::to_string(counter++) + ".txt";
+    std::string path = ::testing::TempDir() + "/vix_buffer_test_" +
+                       std::to_string(counter++) + ".txt";
     std::ofstream f(path, std::ios::binary);
     f << contents;
     f.close();
@@ -201,5 +207,36 @@ TEST(BufferTest, SaveRoundTripPreservesEndingStyleAfterEdit) {
     std::string contents((std::istreambuf_iterator<char>(in)),
                          std::istreambuf_iterator<char>());
     EXPECT_EQ(contents, "xone\r\ntwo\r\n");
+    std::remove(path.c_str());
+}
+
+// A lone \r (or one on the final line of a file without a trailing \n) is
+// content, not a truncated CRLF; it must survive the round-trip untouched.
+TEST(BufferTest, SaveRoundTripPreservesLoneCarriageReturn) {
+    for (const char* sample : {"\r", "b\r", "a\r\nb\r", "word\r"}) {
+        std::string path = WriteTemp(sample);
+        Buffer buf;
+        buf.LoadFile(path);
+        EXPECT_TRUE(buf.SaveFile());
+        std::ifstream in(path, std::ios::binary);
+        std::string contents((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+        EXPECT_EQ(contents, sample);
+        std::remove(path.c_str());
+    }
+}
+
+// Mixed endings are normalized to the style of the first line: the second
+// "\n" below becomes "\r\n". Byte-for-byte applies only to uniform files;
+// this freezes the deliberate first-line-wins tradeoff.
+TEST(BufferTest, MixedLineEndingsFollowFirstLine) {
+    std::string path = WriteTemp("a\r\nb\n");
+    Buffer buf;
+    buf.LoadFile(path);
+    EXPECT_TRUE(buf.SaveFile());
+    std::ifstream in(path, std::ios::binary);
+    std::string contents((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_EQ(contents, "a\r\nb\r\n");
     std::remove(path.c_str());
 }

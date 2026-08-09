@@ -27,9 +27,19 @@ void Buffer::LoadFile(const std::string& fname) {
         ends_with_newline = (f.get() == '\n');
     }
     f.seekg(0, std::ios::beg);
+    // Collect raw lines first: getline splits on \n and leaves any \r behind,
+    // but whether that \r was a CRLF marker or real content depends on whether
+    // the line was actually newline-terminated.
+    std::vector<std::string> raw;
     std::string l;
-    while (std::getline(f, l)) {
-        if (!l.empty() && l.back() == '\r') {
+    while (std::getline(f, l)) raw.push_back(l);
+    for (size_t i = 0; i < raw.size(); i++) {
+        l = raw[i];
+        // Every line getline returns is newline-terminated except the final
+        // one when the file does not end with \n; a trailing \r there belongs
+        // to the content, not to a line ending.
+        bool terminated = (i + 1 < raw.size()) || ends_with_newline;
+        if (!l.empty() && l.back() == '\r' && terminated) {
             // The first line decides the line-ending style so save can restore it.
             if (lines.empty()) crlf = true;
             l.pop_back();
@@ -62,6 +72,10 @@ bool Buffer::SaveFile() {
 
 void Buffer::Insert(int line, int col, const std::string& text) {
     if (line < 0 || line >= (int)lines.size()) return;
+    // The line model has one entry per \n terminator; embedding a raw newline
+    // in a "line" corrupts GetLineCount-based logic and the save path. Callers
+    // that need to insert several lines use InsertLine / PasteCommand instead.
+    if (text.find('\n') != std::string::npos) return;
     // Clamp so a stale cursor position from an undo/redo still lands in-bounds.
     if (col < 0) col = 0;
     if (col > (int)lines[line].length()) col = (int)lines[line].length();

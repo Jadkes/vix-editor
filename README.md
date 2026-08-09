@@ -73,7 +73,7 @@ ctest --test-dir build --output-on-failure
 The suite has three test groups:
 
 - **BufferTest** — line editing, bounds checks, and byte-for-byte save round-trips
-  (LF, CRLF, no trailing newline)
+  (LF, CRLF, no trailing newline; mixed endings normalize to the first line's style)
 - **HistoryTest** — undo/redo, redo invalidation, bounded stack trimming,
   single- and multi-line paste round-trips
 - **PtySmoke** — drives the real `vix` binary through a pty: open/edit/save,
