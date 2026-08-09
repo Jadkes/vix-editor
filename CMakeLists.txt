@@ -17,18 +17,22 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Threads REQUIRED)
 
-# Prefer the wide-char ncursesw build for UTF-8 rendering; if it is missing,
-# fall back to plain curses so the project still builds on minimal systems.
+# Prefer the wide-char ncursesw build for UTF-8 rendering. FindCurses looks
+# for ncursesw but will settle for the narrow libcurses if that's all there
+# is; say which one we actually got so a "plain curses" link is visible.
 set(CURSES_NEED_WIDE TRUE)
 find_package(Curses)
 if(NOT Curses_FOUND)
-    message(WARNING "Wide-char curses (ncursesw) not found; falling back to plain curses")
-    unset(CURSES_LIBRARY CACHE)
-    unset(CURSES_NCURSES_LIBRARY CACHE)
-    unset(CURSES_NCURSESW_LIBRARY CACHE)
-    unset(CURSES_INCLUDE_PATH CACHE)
-    set(CURSES_NEED_WIDE FALSE)
-    find_package(Curses REQUIRED)
+    message(FATAL_ERROR "curses/ncurses not found - vix requires a curses library")
+endif()
+if(NOT CURSES_USE_NCURSES)
+    # FindCurses only reports ncurses use through CURSES_USE_NCURSES; without
+    # it the fallback is plain curses, which cannot render wide UTF-8 chars.
+    message(WARNING "ncurses not found; built against plain curses, wide chars will not render")
+elseif(CURSES_NCURSES_LIBRARY MATCHES "w")
+    message(STATUS "curses: ncursesw (wide-char UTF-8)")
+else()
+    message(WARNING "curses: narrow ncurses found; wide characters will not render")
 endif()
 
 add_executable(vix
@@ -53,26 +57,37 @@ target_compile_definitions(vix PRIVATE VIX_VERSION="${PROJECT_VERSION}")
 
 option(VIX_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 
-if(MSVC)
-    target_compile_options(vix PRIVATE /W4 /permissive- /utf-8)
-    if(VIX_WARNINGS_AS_ERRORS)
-        target_compile_options(vix PRIVATE /WX)
+# Shared warning flags for the editor and the test binaries, so the test
+# targets get the same -Wall/-Werror treatment (and -Werror when configured).
+function(vix_compile_options TARGET)
+    if(MSVC)
+        target_compile_options(${TARGET} PRIVATE /W4 /permissive- /utf-8)
+        if(VIX_WARNINGS_AS_ERRORS)
+            target_compile_options(${TARGET} PRIVATE /WX)
+        endif()
+    else()
+        target_compile_options(${TARGET} PRIVATE -Wall -Wextra -Wpedantic)
+        if(VIX_WARNINGS_AS_ERRORS)
+            target_compile_options(${TARGET} PRIVATE -Werror)
+        endif()
     endif()
-else()
-    target_compile_options(vix PRIVATE -Wall -Wextra -Wpedantic)
-    if(VIX_WARNINGS_AS_ERRORS)
-        target_compile_options(vix PRIVATE -Werror)
-    endif()
-endif()
+endfunction()
+
+vix_compile_options(vix)
 
 option(VIX_ENABLE_SANITIZERS "Build with ASan+UBSan (GCC/Clang only)" OFF)
-if(VIX_ENABLE_SANITIZERS)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(vix PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
-        target_link_options(vix PRIVATE -fsanitize=address,undefined)
-    else()
-        message(WARNING "VIX_ENABLE_SANITIZERS only supported with GCC/Clang; ignoring")
+# Applied to the editor and every test binary (buffer/history are precisely
+# where the OOB/leak class bugs that ASan catches live). No-op unless the
+# option is on and the compiler supports the flags.
+function(vix_enable_sanitizers TARGET)
+    if(VIX_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${TARGET} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
+        target_link_options(${TARGET} PRIVATE -fsanitize=address,undefined)
     endif()
+endfunction()
+vix_enable_sanitizers(vix)
+if(VIX_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    message(WARNING "VIX_ENABLE_SANITIZERS only supported with GCC/Clang; ignoring")
 endif()
 
 option(VIX_ENABLE_LTO "Build with link-time optimization where supported" OFF)

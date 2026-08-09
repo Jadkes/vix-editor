@@ -25,19 +25,30 @@ FetchContent_MakeAvailable(googletest)
 add_executable(buffer_test buffer_test.cpp ../src/core/buffer.cpp)
 target_include_directories(buffer_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(buffer_test PRIVATE GTest::gtest_main)
-target_compile_options(buffer_test PRIVATE -Wall -Wextra -Wpedantic)
+vix_compile_options(buffer_test)
+vix_enable_sanitizers(buffer_test)
 add_test(NAME BufferTest COMMAND buffer_test)
+set_tests_properties(BufferTest PROPERTIES TIMEOUT 60)
 
 add_executable(history_test history_test.cpp ../src/history/history.cpp ../src/core/buffer.cpp)
 target_include_directories(history_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(history_test PRIVATE GTest::gtest_main)
-target_compile_options(history_test PRIVATE -Wall -Wextra -Wpedantic)
+vix_compile_options(history_test)
+vix_enable_sanitizers(history_test)
 add_test(NAME HistoryTest COMMAND history_test)
+set_tests_properties(HistoryTest PROPERTIES TIMEOUT 60)
 
 # End-to-end: run the real vix binary in a pty, feed keystrokes, and check
-# the terminal output and exit status. Needs python3 on the machine.
-find_program(PYTHON3 python3 REQUIRED)
-add_test(
-    NAME PtySmoke
-    COMMAND ${PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/pty_smoke.py $<TARGET_FILE:vix>
-)
+# the terminal output and exit status. Optional so a machine without python3
+# (or a non-POSIX host without pty support) can still build and run the unit
+# tests; the smoke test simply is not registered then.
+find_program(PYTHON3 python3)
+if(PYTHON3 AND NOT WIN32)
+    add_test(
+        NAME PtySmoke
+        COMMAND ${PYTHON3} ${CMAKE_CURRENT_SOURCE_DIR}/pty_smoke.py $<TARGET_FILE:vix>
+    )
+    # The pty scenarios bound their own waits at ~8s each; this is a backstop
+    # so a hung editor kills the test instead of stalling the whole job.
+    set_tests_properties(PtySmoke PROPERTIES TIMEOUT 180)
+endif()

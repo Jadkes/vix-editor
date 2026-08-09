@@ -16,6 +16,15 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
+        },
+        {
+            "name": "build-only",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-notests",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_TESTING": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -28,6 +37,27 @@
             "name": "debug",
             "configurePreset": "debug",
             "jobs": 0
+        },
+        {
+            "name": "build-only",
+            "configurePreset": "build-only",
+            "jobs": 0
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "default",
+            "configurePreset": "default",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "debug",
+            "configurePreset": "debug",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }
