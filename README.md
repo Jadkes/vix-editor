@@ -14,30 +14,37 @@ Vix is a **modeless** terminal text editor — like **nano** or **Emacs**, you j
 
 ---
 
-## Release 1.0.6
+## Release 1.0.7
 
-Latest release: **[1.0.6](https://github.com/Jadkes/vix-editor/releases/tag/1.0.6)** — prebuilt **x86_64 Linux** binary.
+Latest release: **[1.0.7](https://github.com/Jadkes/vix-editor/releases/tag/v1.0.7)** — prebuilt **x86_64 Linux** binary.
 
-What's new in 1.0.6:
+What's new in 1.0.7:
 
-- **C++20 modernization** — the hot paths now use `std::string_view`,
-  `std::from_chars`, `std::optional`, `std::ranges`, `std::format`,
-  `std::span`, structured bindings, and factory helpers (`Command::make`)
-  for the history commands. Cleaner, faster, less copying.
-- **Richer C/C++ syntax highlighting** — keywords stay cyan, `#include` /
-  `#define` / `static` get a violet-pink, builtin types (`int`, `char`,
-  `size_t`) get bright blue, and include filenames get pistachio green —
-  inspired by the tokyo-night palette, via custom RGB slots in the Nord
-  theme (with a safe fallback for 8/16-color terminals).
+- **Real display columns** — tabs and UTF-8 multi-byte characters measure
+  their true width, so wrap, cursor column tracking, and the mouse align
+  with what's on screen.
+- **Horizontal scroll that works** — long lines actually scroll instead of
+  just shifting the cursor; tab stops anchor to absolute buffer columns
+  and stay put while you scroll.
+- **Active-line gutter highlight** — the current line's number renders
+  bold in soft amber, so the cursor line reads at a glance (no full-row
+  highlight).
+- **Search robustness** — a highlight no longer bleeds past a match that
+  ends mid-codepoint.
+- **Buffer fixes** — stray `\r` is preserved on round-trip instead of
+  garbling the file, and embedded newlines are rejected rather than
+  corrupting the buffer.
+- **Hardened builds** — CMake/CTest cleaned up, curses/option handling
+  made honest.
 
 ### Install the binary (no build required)
 
 ```bash
-curl -L -o vix-1.0.6-linux-x86_64.tar.gz \
-  https://github.com/Jadkes/vix-editor/releases/download/1.0.6/vix-1.0.6-linux-x86_64.tar.gz
-tar xzf vix-1.0.6-linux-x86_64.tar.gz
-sudo install -m755 vix-1.0.6-linux-x86_64/vix /usr/local/bin/
-vix --version   # → vix 1.0.6
+curl -L -o vix-1.0.7-linux-x86_64.tar.gz \
+  https://github.com/Jadkes/vix-editor/releases/download/v1.0.7/vix-1.0.7-linux-x86_64.tar.gz
+tar xzf vix-1.0.7-linux-x86_64.tar.gz
+sudo install -m755 vix-1.0.7-linux-x86_64/vix /usr/local/bin/
+vix --version   # → vix 1.0.7
 ```
 
 ---
