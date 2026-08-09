@@ -101,7 +101,7 @@ private:
     void draw_tab_bar(int mx);
     void draw_sidebar(int my, int mx);
     void draw_line(int row, int buf_idx, int max_x, int sidebar_w, Tab& tab,
-                   int start_col = 0, int end_col = -1);
+                   int start_col = 0, int end_col = -1, int scroll_disp = 0);
     void draw_status(int my, int mx);
     void place_cursor(int my, int mx, Tab& tab);
     std::string prompt(const std::string& msg);

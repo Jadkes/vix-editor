@@ -1064,9 +1064,15 @@ void Editor::draw_sidebar(int my, int mx) {
     attroff(COLOR_PAIR(CP_SIDEBAR));
 }
 
-void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int start_col, int end_col) {
+void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int start_col, int end_col, int scroll_disp) {
     auto& line = tab.buffer[buf_idx];
     if (end_col < 0 || end_col > (int)line.length()) end_col = (int)line.length();
+    // The first drawn byte sits at the column of start_col within the line
+    // (start_col==0 draws from the window origin). Absolute tab stops keep the
+    // render x consistent with the cursor/click math so a tab scrolled into
+    // the window lands on the same column both measure.
+    if (start_col < 0) start_col = 0;
+    if (start_col > (int)line.length()) start_col = (int)line.length();
     if (settings.line_numbers) {
         attron(COLOR_PAIR(CP_LINENUM));
         mvprintw(row, sw, "%3d ", buf_idx + 1);
@@ -1093,7 +1099,7 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
         int n = utf8_seq_len(line, cur_byte);
         if (c0 == '\t') {
             int tw = settings.tab_width > 0 ? settings.tab_width : 1;
-            int rel = cur_col - cur_origin;
+            int rel = cur_col - cur_origin + scroll_disp;
             int cells = tw - (rel % tw);
             if (cur_col + cells > max_x) cells = std::max(1, max_x - cur_col);
             for (int k = 0; k < cells; k++) addch(' ');
@@ -1104,7 +1110,7 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
         if (n == 1) { addch(line[cur_byte]); cur_col += 1; cur_byte += 1; return; }
         wchar_t wc = utf8_decode(line, cur_byte, n);
         addnwstr(&wc, 1);
-        cur_col += codepoint_cols(line, cur_byte, cur_col - cur_origin, settings.tab_width);
+        cur_col += codepoint_cols(line, cur_byte, cur_col - cur_origin + scroll_disp, settings.tab_width);
         cur_byte += n;
     };
     while (i < end_col && cur_x < max_x) {
@@ -1126,7 +1132,13 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
             int cp = (search_hit_idx == search_idx) ? CP_MATCH : CP_SEARCH;
             attron(COLOR_PAIR(cp));
             int hit_end = std::min(i + search_hit_len, end_col);
-            while (i < hit_end && cur_x < max_x) emit(i, cur_x);
+            // emit() walks whole codepoints; don't colour a multi-byte char
+            // whose tail lies outside the hit range (only reachable with a
+            // byte-misaligned query).
+            while (i < hit_end && cur_x < max_x) {
+                if (i + utf8_seq_len(line, i) > hit_end) break;
+                emit(i, cur_x);
+            }
             attroff(COLOR_PAIR(cp));
             continue;
         }
@@ -1307,7 +1319,15 @@ void Editor::draw() {
     } else {
         for (int i = 1; i < my - 1; i++) {
             int idx = (i - 1) + tab.v_scroll;
-            if (idx < tab.buffer.GetLineCount()) draw_line(i, idx, mx, sw, tab);
+            if (idx < tab.buffer.GetLineCount()) {
+                // Scroll the line so the byte at h_scroll leads the window; the
+                // tab stops stay anchored to absolute buffer columns so the
+                // drawn text matches the cursor and click column math.
+                auto& l = tab.buffer[idx];
+                int hb = std::min(tab.h_scroll, (int)l.length());
+                int sd = byte_to_disp(l, hb, settings.tab_width);
+                draw_line(i, idx, mx, sw, tab, hb, (int)l.length(), sd);
+            }
         }
     }
 

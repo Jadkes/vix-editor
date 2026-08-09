@@ -376,6 +376,55 @@ def scenario_unicode_tab(tmp):
             os.environ["HOME"] = saved_home
 
 
+def scenario_hscroll(tmp):
+    """Horizontal scrolling (no wrap) reveals the tail of a long line.
+
+    Moving right past the window width scrolls the viewport; the rendered
+    output then shows characters from the scrolled region, and tabs keep
+    their buffer-anchored stops so the cursor column matches the glyphs.
+    """
+    fpath = os.path.join(tmp, "long.txt")
+    body = "abcdefghij" * 30  # 300 chars
+    with open(fpath, "w") as f:
+        f.write(body + "\n")
+
+    cfg = os.path.join(tmp, ".config", "vix")
+    os.makedirs(cfg, exist_ok=True)
+    # text_w = COLS(100) - sidebar(22) = 78, so any cursor past ~78 columns
+    # must force h_scroll>0.
+    with open(os.path.join(cfg, "settings.json"), "w") as f:
+        f.write('{\n    "line_numbers": false\n}\n')
+
+    saved_home = os.environ.get("HOME")
+    os.environ["HOME"] = tmp
+    try:
+        pid, fd = spawn(sys.argv[1], tmp, fpath)
+        try:
+            time.sleep(0.4)
+            out = drain(fd, 0.4)
+            if body[:78].encode() not in out:
+                return "line head not rendered at start: %r" % out[:120]
+            # Far right: cursor well past the window.
+            for _ in range(95):
+                os.write(fd, b"\x1bOC")  # right arrow
+            time.sleep(0.4)
+            out = drain(fd, 0.4)
+            tail = body[-40:]
+            if tail.encode() not in out:
+                return "scrolled tail (%r) not rendered: %r" % (tail, out[-200:])
+            status = clean_quit(fd, pid)
+            if exit_code(status) != 0:
+                return "exit code %r after hscrollear" % exit_code(status)
+            return None
+        finally:
+            os.close(fd)
+    finally:
+        if saved_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved_home
+
+
 def scenario_session_resume(tmp):
     """A previous session (files + cwd) is reopened by --resume."""
     cfg = os.path.join(tmp, ".config", "vix")
@@ -550,6 +599,7 @@ def main():
         ("save_as", scenario_save_as),
         ("word_wrap", scenario_word_wrap),
         ("unicode_tab", scenario_unicode_tab),
+        ("h_scroll", scenario_hscroll),
         ("session_resume", scenario_session_resume),
         ("session_roundtrip", scenario_session_roundtrip),
         ("mouse_selection", scenario_mouse_selection),
