@@ -14,37 +14,41 @@ Vix is a **modeless** terminal text editor — like **nano** or **Emacs**, you j
 
 ---
 
-## Release 1.0.7
+## Release 1.1.0
 
-Latest release: **[1.0.7](https://github.com/Jadkes/vix-editor/releases/tag/v1.0.7)** — prebuilt **x86_64 Linux** binary.
+Latest release: **[1.1.0](https://github.com/Jadkes/vix-editor/releases/tag/v1.1.0)** — prebuilt **x86_64 Linux** binary.
 
-What's new in 1.0.7:
+What's new in 1.1.0:
 
-- **Real display columns** — tabs and UTF-8 multi-byte characters measure
-  their true width, so wrap, cursor column tracking, and the mouse align
-  with what's on screen.
-- **Horizontal scroll that works** — long lines actually scroll instead of
-  just shifting the cursor; tab stops anchor to absolute buffer columns
-  and stay put while you scroll.
-- **Active-line gutter highlight** — the current line's number renders
-  bold in soft amber, so the cursor line reads at a glance (no full-row
-  highlight).
-- **Search robustness** — a highlight no longer bleeds past a match that
-  ends mid-codepoint.
-- **Buffer fixes** — stray `\r` is preserved on round-trip instead of
-  garbling the file, and embedded newlines are rejected rather than
-  corrupting the buffer.
-- **Hardened builds** — CMake/CTest cleaned up, curses/option handling
-  made honest.
+- **Dialog-based installer** — `install.sh` is now a full menu-driven
+  cross-distro installer (Debian/Fedora/Arch/openSUSE/Alpine) with install,
+  build-from-source, clipboard, and uninstall workflows.
+- **Release integrity** — every download is checked against GitHub's
+  published SHA-256 digest, and archives containing unsafe paths
+  (`../`, absolute members) are refused before extraction.
+- **Canonical version menu** — pick any release by its real version number
+  (derived from the asset, never from the git tag), with offline fallback
+  to the last known good version.
+- **Honest build config** — ncursesw is now a hard dependency (no silent
+  narrow-curses fallback), the `Curses::Curses` imported target is wired
+  cleanly, and the multi-config generator handling is fixed.
+- **Code hardening** — member-init order fixed in `Editor`, unused-member
+  and brace-guard cleanups, and `GetFilename()` no longer copies.
 
 ### Install the binary (no build required)
 
 ```bash
-curl -L -o vix-1.0.7-linux-x86_64.tar.gz \
-  https://github.com/Jadkes/vix-editor/releases/download/v1.0.7/vix-1.0.7-linux-x86_64.tar.gz
-tar xzf vix-1.0.7-linux-x86_64.tar.gz
-sudo install -m755 vix-1.0.7-linux-x86_64/vix /usr/local/bin/
-vix --version   # → vix 1.0.7
+curl -L -o vix-1.1.0-linux-x86_64.tar.gz \
+  https://github.com/Jadkes/vix-editor/releases/download/v1.1.0/vix-1.1.0-linux-x86_64.tar.gz
+tar xzf vix-1.1.0-linux-x86_64.tar.gz
+sudo install -m755 vix-1.1.0-linux-x86_64/vix /usr/local/bin/
+vix --version   # → vix 1.1.0
+```
+
+Or run the installer:
+
+```bash
+./install.sh
 ```
 
 ---
@@ -54,7 +58,7 @@ vix --version   # → vix 1.0.7
 - C++20 compiler (GCC or Clang)
 - CMake ≥ 3.20
 - Ninja
-- ncursesw (wide-char ncurses; plain ncurses is used as a fallback)
+- ncursesw (wide-char ncurses; required — no narrow-curses fallback)
 
 ## Build
 

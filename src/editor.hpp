@@ -23,7 +23,7 @@
 namespace fs = std::filesystem;
 
 #ifndef VIX_VERSION
-#define VIX_VERSION "1.0.7"
+#define VIX_VERSION "1.1.0"
 #endif
 #define VIX_NAME "vix"
 
@@ -51,7 +51,7 @@ namespace fs = std::filesystem;
 static constexpr int LINENUM_WIDTH = 4;
 
 struct SyntaxRules {
-    int lang;
+    int lang = 0;
     std::string name;
     // Control-flow and structural words (return, if, for, class).
     std::vector<std::string> keywords;
@@ -77,7 +77,7 @@ struct Tab {
     bool sel_has;        // a real (non-zero) selection exists
     int sel_anchor_x, sel_anchor_y;
     int sel_cur_x, sel_cur_y;
-    Tab() : x(0), y(0), v_scroll(0), h_scroll(0), v_seg(0), in_block_comment(false),
+    Tab() : x(0), y(0), v_scroll(0), h_scroll(0), v_seg(0), rules(), in_block_comment(false),
            sel_active(false), sel_has(false), sel_anchor_x(0), sel_anchor_y(0),
            sel_cur_x(0), sel_cur_y(0) {}
 };
