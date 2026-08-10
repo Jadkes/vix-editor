@@ -27,7 +27,7 @@ public:
     void PushBack(const std::string& line);
     void EraseLine(int n);
     void InsertLine(int n, const std::string& text);
-    std::string GetFilename() const;
+    const std::string& GetFilename() const;
     bool IsModified() const;
 
     void SetModified(bool value);

@@ -15,8 +15,8 @@ static constexpr int VIX_CP_COUNT = 19;
 
 struct Theme {
     std::string name;
-    int fg[VIX_CP_COUNT];
-    int bg[VIX_CP_COUNT];
+    int fg[VIX_CP_COUNT] = {};
+    int bg[VIX_CP_COUNT] = {};
 };
 
 extern const Theme themes[4];

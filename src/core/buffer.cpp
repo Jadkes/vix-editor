@@ -100,7 +100,7 @@ std::string& Buffer::operator[](int n) {
 }
 
 int Buffer::GetLineCount() const { return (int)lines.size(); }
-std::string Buffer::GetFilename() const { return filename; }
+const std::string& Buffer::GetFilename() const { return filename; }
 bool Buffer::IsModified() const { return modified; }
 void Buffer::SetModified(bool value) { modified = value; }
 void Buffer::SetFilename(const std::string& fname) { filename = fname; }

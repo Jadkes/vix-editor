@@ -382,10 +382,10 @@ Editor::Editor(int argc, char** argv)
     : current_tab(0), running(true),
       show_sidebar(true), focus_sidebar(false),
       in_search_mode(false), search_regex(false),
-      sidebar_sel(0), sidebar_scroll(0), search_idx(-1)
+      current_dir(fs::current_path().string()),
+      sidebar_sel(0), sidebar_scroll(0), search_idx(-1),
+      last_save_time(std::chrono::steady_clock::now())
 {
-    current_dir = fs::current_path().string();
-    last_save_time = std::chrono::steady_clock::now();
     LoadSettings(settings);
 
     bool resume = false;
@@ -854,8 +854,10 @@ void Editor::find_match(Tab& tab) {
     char c = tab.buffer[tab.y][tab.x];
     std::string open = "{([", close = "})]";
     int dir = 0, pair_idx = -1;
+    // cppcheck-suppress stlIfStrFind -- pair_idx below indexes close[]/open[]
+    // for the matching char, so starts_with() (no index) cannot replace find().
     if ((pair_idx = (int)open.find(c)) != (int)std::string::npos) dir = 1;
-    else if ((pair_idx = (int)close.find(c)) != (int)std::string::npos) dir = -1;
+    else if ((pair_idx = (int)close.find(c)) != (int)std::string::npos) dir = -1; // cppcheck-suppress stlIfStrFind
     if (dir == 0) return;
     char target = (dir == 1) ? close[pair_idx] : open[pair_idx];
     int depth = 0, cy = tab.y, cx = tab.x;
@@ -1043,7 +1045,10 @@ void Editor::draw_sidebar(int my, int mx) {
         else icon = ".";
 
         std::string label = icon + " " + n;
-        if (label.length() > SIDEBAR_LABEL_W) label = label.substr(0, SIDEBAR_LABEL_MAX) + "..";
+        if (label.length() > SIDEBAR_LABEL_W) {
+            label.resize(SIDEBAR_LABEL_MAX);
+            label += "..";
+        }
 
         if (sel) {
             attron(COLOR_PAIR(CP_SELECT));
