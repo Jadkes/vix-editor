@@ -25,6 +25,15 @@
                 "CMAKE_BUILD_TYPE": "Release",
                 "BUILD_TESTING": "OFF"
             }
+        },
+        {
+            "name": "sanitize",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-asan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "VIX_ENABLE_SANITIZERS": "ON"
+            }
         }
     ],
     "buildPresets": [
@@ -41,6 +50,11 @@
         {
             "name": "build-only",
             "configurePreset": "build-only",
+            "jobs": 0
+        },
+        {
+            "name": "sanitize",
+            "configurePreset": "sanitize",
             "jobs": 0
         }
     ],

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(vix-editor VERSION 1.0.7 LANGUAGES CXX DESCRIPTION "A vi-style editor in C++")
+project(vix-editor VERSION 1.1.0 LANGUAGES CXX DESCRIPTION "A vi-style editor in C++")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,7 +7,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Default to Release when no build type was given and the generator is not
 # multi-config (Xcode/Visual Studio pick the config themselves).
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+get_property(is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT is_multi_config AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
     set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
 endif()
@@ -15,25 +16,12 @@ endif()
 # Emit compile_commands.json so clangd and other language servers index correctly.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(Threads REQUIRED)
-
-# Prefer the wide-char ncursesw build for UTF-8 rendering. FindCurses looks
-# for ncursesw but will settle for the narrow libcurses if that's all there
-# is; say which one we actually got so a "plain curses" link is visible.
+# vix renders UTF-8 through wcwidth/curses wide chars, so ncursesw is a hard
+# dependency. CURSES_NEED_WIDE makes FindCurses search the ncursesw library
+# family; CURSES_NEED_NCURSES rejects falling back to plain libcurses.
 set(CURSES_NEED_WIDE TRUE)
-find_package(Curses)
-if(NOT Curses_FOUND)
-    message(FATAL_ERROR "curses/ncurses not found - vix requires a curses library")
-endif()
-if(NOT CURSES_USE_NCURSES)
-    # FindCurses only reports ncurses use through CURSES_USE_NCURSES; without
-    # it the fallback is plain curses, which cannot render wide UTF-8 chars.
-    message(WARNING "ncurses not found; built against plain curses, wide chars will not render")
-elseif(CURSES_NCURSES_LIBRARY MATCHES "w")
-    message(STATUS "curses: ncursesw (wide-char UTF-8)")
-else()
-    message(WARNING "curses: narrow ncurses found; wide characters will not render")
-endif()
+set(CURSES_NEED_NCURSES TRUE)
+find_package(Curses REQUIRED)
 
 add_executable(vix
     src/main.cpp
@@ -43,15 +31,16 @@ add_executable(vix
     src/ui/settings.cpp
 )
 
-# Modern FindCurses provides the imported Curses::Curses target (includes and
-# defines included); fall back to the legacy variables for old toolkits.
-if(TARGET Curses::Curses)
-    target_link_libraries(vix PRIVATE Curses::Curses)
-else()
-    target_link_libraries(vix PRIVATE ${CURSES_LIBRARIES})
-    target_include_directories(vix PRIVATE ${CURSES_INCLUDE_DIR})
+# FindCurses has never provided a Curses::Curses target (the docs show how to
+# create one); build the imported target ourselves so linking is one code path.
+if(NOT TARGET Curses::Curses)
+    add_library(Curses::Curses INTERFACE IMPORTED)
+    set_target_properties(Curses::Curses PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "${CURSES_INCLUDE_DIRS}"
+        INTERFACE_LINK_LIBRARIES "${CURSES_LIBRARIES}"
+    )
 endif()
-target_link_libraries(vix PRIVATE Threads::Threads)
+target_link_libraries(vix PRIVATE Curses::Curses)
 
 target_compile_definitions(vix PRIVATE VIX_VERSION="${PROJECT_VERSION}")
 
@@ -80,13 +69,13 @@ option(VIX_ENABLE_SANITIZERS "Build with ASan+UBSan (GCC/Clang only)" OFF)
 # where the OOB/leak class bugs that ASan catches live). No-op unless the
 # option is on and the compiler supports the flags.
 function(vix_enable_sanitizers TARGET)
-    if(VIX_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(${TARGET} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer -g -O1)
+    if(VIX_ENABLE_SANITIZERS AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+        target_compile_options(${TARGET} PRIVATE -fsanitize=address,undefined -fno-omit-frame-pointer)
         target_link_options(${TARGET} PRIVATE -fsanitize=address,undefined)
     endif()
 endfunction()
 vix_enable_sanitizers(vix)
-if(VIX_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+if(VIX_ENABLE_SANITIZERS AND NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
     message(WARNING "VIX_ENABLE_SANITIZERS only supported with GCC/Clang; ignoring")
 endif()
 
@@ -104,8 +93,9 @@ endif()
 include(GNUInstallDirs)
 install(TARGETS vix RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
-# Tests: unit (GoogleTest) and end-to-end pty smoke tests. Disable with
-# -DBUILD_TESTING=OFF to keep the release build free of the gtest dependency.
+# Tests: unit (GoogleTest) and end-to-end pty smoke tests. include(CTest)
+# defines BUILD_TESTING, ON by default; turn it off with -DBUILD_TESTING=OFF
+# (as the build-only preset does) to keep the binary free of gtest.
 include(CTest)
 if(BUILD_TESTING)
     add_subdirectory(tests)
