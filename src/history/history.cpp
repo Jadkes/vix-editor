@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /*
  * history.cpp - Grow/shrink undo and redo stacks via Command objects
  *

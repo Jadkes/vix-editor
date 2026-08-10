@@ -171,3 +171,11 @@ Settings live in `~/.config/vix/settings.json` and are written when you change t
 
 When you quit, vix also writes `~/.config/vix/session.json` (the open tabs and
 directory); start it with `vix --resume` to pick back up where you left off.
+
+## License
+
+Vix is free software: you can redistribute it and/or modify it under the
+terms of the **GNU General Public License, version 3** (or, at your option,
+any later version). See [LICENSE](LICENSE) for the full text.
+
+**SPDX-License-Identifier: GPL-3.0-or-later**

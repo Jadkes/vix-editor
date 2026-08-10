@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /*
  * settings.cpp - Theme table, JSON-ish settings load/save, settings panel
  *

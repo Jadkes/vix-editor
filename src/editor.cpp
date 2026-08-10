@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /*
  * editor.cpp - UI rendering, input dispatch, and file/project handling
  *

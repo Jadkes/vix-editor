@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /*
  * history.hpp - Undo/redo via the Command pattern
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 /*
  * editor.hpp - ncurses front-end and the main event loop
  *
