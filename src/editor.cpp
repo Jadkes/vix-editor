@@ -699,6 +699,16 @@ std::optional<std::string> Editor::prompt(const std::string& msg) {
     return std::string(buf);
 }
 
+// Dependency and build-output trees: walking them buries real matches under
+// thousands of vendored files.
+static bool is_junk_dir(const std::string& name) {
+    static const char* junk[] = {".git", "node_modules", "build", "dist", "target",
+                                 "__pycache__", ".cache"};
+    for (const char* j : junk)
+        if (name == j) return true;
+    return false;
+}
+
 void Editor::fuzzy_finder() {
     std::string q = prompt("Find File: ").value_or("");
     if (q.empty()) return;
@@ -706,12 +716,17 @@ void Editor::fuzzy_finder() {
     std::vector<std::string> all_files;
     all_files.push_back("..");
     try {
-        for (const auto& e : fs::recursive_directory_iterator(current_dir)) {
-            if (fs::is_regular_file(e.path())) {
-                std::string rel = fs::relative(e.path(), current_dir).string();
-                if (rel.size() > 2 && rel.substr(0, 2) == "./") rel = rel.substr(2);
-                all_files.push_back(rel);
+        fs::recursive_directory_iterator it(current_dir,
+                                            fs::directory_options::skip_permission_denied);
+        for (auto end_it = fs::end(it); it != end_it; ++it) {
+            std::error_code dec;
+            if (it->is_directory(dec) && !dec) {
+                if (is_junk_dir(it->path().filename().string()))
+                    it.disable_recursion_pending();
+                continue;
             }
+            if (it->is_regular_file(dec) && !dec)
+                all_files.push_back(fs::relative(it->path(), current_dir).string());
         }
     } catch (...) {}
 
@@ -833,6 +848,11 @@ void Editor::find_all(Tab& tab, const std::string& q) {
         for (int i = 0; i < tab.buffer.GetLineCount(); i++)
             plain_search(tab.buffer[i], i, q);
     }
+    // The renderer binary-searches these per frame; keep the (line, col)
+    // order guaranteed instead of relying on how each search path pushes.
+    std::sort(search_results.begin(), search_results.end(), [](const SearchHit& a, const SearchHit& b) {
+        return a.line != b.line ? a.line < b.line : a.col < b.col;
+    });
     if (!search_results.empty()) {
         search_idx = 0;
         tab.y = search_results[0].line;
@@ -1153,6 +1173,15 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
     int cur_x = sw + (settings.line_numbers ? LINENUM_WIDTH : 0);
     const int cur_origin = cur_x;
     int i = start_col;
+    // search_results is sorted by (line, col), so one advancing cursor
+    // replaces a scan of every hit for every byte: O(visible) per frame
+    // instead of O(visible x hits).
+    size_t sr = std::lower_bound(
+                    search_results.begin(), search_results.end(), std::make_pair(buf_idx, i),
+                    [](const SearchHit& h, const std::pair<int, int>& key) {
+                        return h.line != key.first ? h.line < key.first : h.col < key.second;
+                    }) -
+                search_results.begin();
     // Render one codepoint at line[cur_byte]: tabs expand to spaces up to the
     // next tab stop, UTF-8 bytes decode and emit as a wide char. Advances
     // cur_byte by the byte length and cur_col by the display width.
@@ -1180,14 +1209,18 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
         int search_hit_len = 0;
         int search_hit_idx = -1;
         if (!search_query.empty()) {
-            for (int si = 0; si < (int)search_results.size(); si++) {
-                if (search_results[si].line == buf_idx && search_results[si].col == i &&
-                    search_results[si].col + search_results[si].len <= (int)line.length()) {
-                    is_search_start = true;
-                    search_hit_len = search_results[si].len;
-                    search_hit_idx = si;
-                    break;
-                }
+            // Advance past hits before the current byte; the head is then
+            // either this byte's hit or nothing.
+            while (sr < search_results.size() &&
+                   (search_results[sr].line < buf_idx ||
+                    (search_results[sr].line == buf_idx && search_results[sr].col < i)))
+                sr++;
+            if (sr < search_results.size() && search_results[sr].line == buf_idx &&
+                search_results[sr].col == i &&
+                search_results[sr].col + search_results[sr].len <= (int)line.length()) {
+                is_search_start = true;
+                search_hit_len = search_results[sr].len;
+                search_hit_idx = (int)sr;
             }
         }
         if (is_search_start) {
@@ -1222,7 +1255,15 @@ void Editor::draw_line(int row, int buf_idx, int max_x, int sw, Tab& tab, int st
             attron(COLOR_PAIR(CP_STRING));
             sel_attr(i); emit(i, cur_x);
             while (i < end_col && cur_x < max_x) {
-                bool closing = (line[i] == c && (i == 0 || line[i-1] != '\\'));
+                bool closing = false;
+                if (line[i] == c) {
+                    // Count the backslash run before the quote: an even run
+                    // means the quote really closes, an odd one it is escaped
+                    // (so "a\\" ends at this quote; "a\\\\" does not).
+                    int run = 0;
+                    while (i - 1 - run >= 0 && line[i - 1 - run] == '\\') run++;
+                    closing = (run % 2 == 0);
+                }
                 sel_attr(i); emit(i, cur_x);
                 if (closing) break;
             }
@@ -1345,6 +1386,35 @@ void Editor::draw_status(int my, int mx) {
     attroff(COLOR_PAIR(CP_STATUS));
 }
 
+/* Walk one source line, updating the in-block-comment state the same way the
+ * renderer does: string literals are skipped (escape-aware), a // to end of
+ * line is ignored, and slash-star/star-slash toggles at each boundary. Used
+ * to replay every line above the viewport so a comment opened off-screen
+ * still colours the visible rows. */
+static bool scan_block_comment_state(const std::string& l, bool in_block) {
+    int i = 0, n = (int)l.length();
+    while (i < n) {
+        if (in_block) {
+            if (l[i] == '*' && i + 1 < n && l[i + 1] == '/') { in_block = false; i += 2; }
+            else i++;
+            continue;
+        }
+        if (l[i] == '"' || l[i] == '\'') {
+            char q = l[i++];
+            while (i < n) {
+                if (l[i] == '\\' && i + 1 < n) { i += 2; continue; }
+                if (l[i] == q) { i++; break; }
+                i++;
+            }
+            continue;
+        }
+        if (l[i] == '/' && i + 1 < n && l[i + 1] == '/') break;  // rest is a line comment
+        if (l[i] == '/' && i + 1 < n && l[i + 1] == '*') { in_block = true; i += 2; continue; }
+        i++;
+    }
+    return in_block;
+}
+
 void Editor::draw() {
     erase();
     int my, mx;
@@ -1356,7 +1426,12 @@ void Editor::draw() {
 
     if (show_sidebar) draw_sidebar(my, mx);
 
-    tab.in_block_comment = false;
+    // The renderer only sees the viewport, so derive the block-comment state
+    // for the first visible row by replaying every hidden line above it.
+    bool block_state = false;
+    for (int li = 0; li < tab.v_scroll && li < tab.buffer.GetLineCount(); li++)
+        block_state = scan_block_comment_state(tab.buffer[li], block_state);
+    tab.in_block_comment = block_state;
     if (settings.word_wrap) {
         int text_w = mx - sw - (settings.line_numbers ? LINENUM_WIDTH : 0);
         if (text_w < 1) text_w = 1;
@@ -1561,7 +1636,8 @@ void Editor::run() {
         int ch = getch();
 
         if (ch == KEY_RESIZE) {
-            resizeterm(0, 0);
+            // ncurses already resized its windows via SIGWINCH; forcing
+            // resizeterm(0,0) on top of that fights the library.
             redraw = true;
             refresh();
             continue;
