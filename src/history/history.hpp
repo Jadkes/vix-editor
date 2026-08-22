@@ -134,4 +134,34 @@ private:
     std::string orig_full_line;
 };
 
+// Merge the line below into the one above (backspace at column 0):
+// execute() appends lower to upper and drops the lower line; undo() splits
+// them apart again at the recorded boundary.
+class JoinLinesCommand : public Command {
+public:
+    explicit JoinLinesCommand(Buffer* buf, int lower_line);
+    static CommandPtr make(Buffer& buf, int lower_line) {
+        return std::make_unique<JoinLinesCommand>(&buf, lower_line);
+    }
+    bool execute() override;
+    bool undo() override;
+    std::string description() const override;
+private:
+    Buffer* buffer;
+    int lower_line;      // index of the line being merged away
+    size_t split_point;  // upper-line length after the join; undo splits here
+};
+
+// Run several commands as one atomic undo step. execute() applies parts in
+// order (rolling back on failure); undo() reverses them in reverse order.
+class CompositeCommand : public Command {
+public:
+    void add(CommandPtr part);
+    bool execute() override;
+    bool undo() override;
+    std::string description() const override;
+private:
+    std::vector<CommandPtr> parts;
+};
+
 #endif

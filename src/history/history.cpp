@@ -25,7 +25,12 @@ bool History::undo() {
     if (undo_stack.empty()) return false;
     CommandPtr cmd = std::move(undo_stack.back());
     undo_stack.pop_back();
-    if (!cmd->undo()) return false;
+    if (!cmd->undo()) {
+        // A failed undo must not lose the command: put it back so the stack
+        // stays consistent and the user can retry or redo past it.
+        undo_stack.push_back(std::move(cmd));
+        return false;
+    }
     redo_stack.push_back(std::move(cmd));
     trimStack(redo_stack);
     return true;
@@ -35,7 +40,11 @@ bool History::redo() {
     if (redo_stack.empty()) return false;
     CommandPtr cmd = std::move(redo_stack.back());
     redo_stack.pop_back();
-    if (!cmd->execute()) return false;
+    if (!cmd->execute()) {
+        // Mirror of the undo failure path: keep the command on the redo stack.
+        redo_stack.push_back(std::move(cmd));
+        return false;
+    }
     undo_stack.push_back(std::move(cmd));
     trimStack(undo_stack);
     return true;
@@ -197,4 +206,59 @@ bool NewLineCommand::undo() {
 
 std::string NewLineCommand::description() const {
     return "NewLine at " + std::to_string(insert_before_line);
+}
+
+JoinLinesCommand::JoinLinesCommand(Buffer* buf, int lower_line)
+    : buffer(buf), lower_line(lower_line), split_point(0) {}
+
+bool JoinLinesCommand::execute() {
+    if (!buffer) return false;
+    if (lower_line < 1 || lower_line >= buffer->GetLineCount()) return false;
+    // Record the boundary once so redo after undo splits at the same spot.
+    split_point = buffer->operator[](lower_line - 1).length();
+    buffer->operator[](lower_line - 1) += buffer->operator[](lower_line);
+    buffer->EraseLine(lower_line);
+    return true;
+}
+
+bool JoinLinesCommand::undo() {
+    if (!buffer) return false;
+    if (lower_line < 1 || lower_line > buffer->GetLineCount()) return false;
+    std::string& upper = buffer->operator[](lower_line - 1);
+    if (split_point > upper.length()) return false;
+    std::string lower = upper.substr(split_point);
+    upper.resize(split_point);
+    buffer->InsertLine(lower_line, lower);
+    return true;
+}
+
+std::string JoinLinesCommand::description() const {
+    return "Join line " + std::to_string(lower_line + 1);
+}
+
+void CompositeCommand::add(CommandPtr part) { parts.push_back(std::move(part)); }
+
+bool CompositeCommand::execute() {
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (!parts[i]->execute()) {
+            // Roll back the prefix that did apply, so a failed composite
+            // leaves the buffer exactly as it started.
+            for (size_t j = i; j-- > 0;) parts[j]->undo();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool CompositeCommand::undo() {
+    // Reverse the parts; on failure keep going so as much state as possible
+    // is restored, but report the composite as failed.
+    bool all_ok = true;
+    for (size_t i = parts.size(); i-- > 0;)
+        if (!parts[i]->undo()) all_ok = false;
+    return all_ok;
+}
+
+std::string CompositeCommand::description() const {
+    return parts.empty() ? "No-op" : parts.front()->description();
 }
