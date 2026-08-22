@@ -15,6 +15,11 @@
 Buffer::Buffer() : filename(""), modified(false), ends_with_newline(false), crlf(false) { lines.push_back(""); }
 
 void Buffer::LoadFile(const std::string& fname) {
+    // Reset round-trip state up front: stale crlf/ends_with_newline flags from
+    // a previously loaded file must never leak into this one (an LF file opened
+    // after a CRLF file would otherwise be rewritten with \r\n endings).
+    crlf = false;
+    ends_with_newline = false;
     std::ifstream f(fname, std::ios::binary);
     // A missing/unreadable file opens as one empty line so the editor never
     // has to special-case a zero-line buffer.
