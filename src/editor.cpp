@@ -120,6 +120,18 @@ static int utf8_seq_len(const std::string& line, int i) {
     return want;
 }
 
+/* Byte index of the codepoint that ends at byte i: walks back over up to
+ * three continuation bytes until a lead byte (or the line start). Keeps the
+ * cursor out of the middle of multi-byte sequences when moving/deleting. */
+static int prev_codepoint_start(const std::string& line, int i) {
+    if (i <= 0) return 0;
+    if (i >= (int)line.size()) return (int)line.size();
+    int start = i - 1;
+    while (start > 0 && i - start < 4 && ((unsigned char)line[start] & 0xC0) == 0x80)
+        start--;
+    return start;
+}
+
 /* Decode the n-byte UTF-8 sequence at line[i] into a wchar_t. Callers only
  * invoke this for valid sequences (n > 1). */
 static wchar_t utf8_decode(const std::string& line, int i, int n) {
@@ -290,17 +302,30 @@ static size_t ifind(std::string_view hay, std::string_view needle, size_t pos) {
     return std::string::npos;
 }
 
+// Escape the two characters that would break a hand-rolled JSON string
+// reader: backslash and double quote. The loader copies escaped chars
+// verbatim, so \\ and \" round-trip exactly.
+static std::string json_escape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        if (c == '\\' || c == '"') out += '\\';
+        out += c;
+    }
+    return out;
+}
+
 void Editor::save_session() {
     std::string dir = std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.config/vix";
     try { fs::create_directories(dir); } catch (...) { return; }
     std::ofstream f(fs::path(dir) / "session.json");
     if (!f.is_open()) return;
     f << "{\n";
-    f << "    \"current_dir\": \"" << current_dir << "\",\n";
+    f << "    \"current_dir\": \"" << json_escape(current_dir) << "\",\n";
     f << "    \"current_tab\": " << current_tab << ",\n";
     f << "    \"files\": [\n";
     for (size_t i = 0; i < tabs.size(); i++) {
-        f << "        \"" << tabs[i]->buffer.GetFilename() << "\"";
+        f << "        \"" << json_escape(tabs[i]->buffer.GetFilename()) << "\"";
         if (i + 1 < tabs.size()) f << ",";
         f << "\n";
     }
@@ -502,8 +527,10 @@ bool Editor::is_untitled(const Buffer& buffer) {
 void Editor::new_tab(const std::string& fname) {
     auto tab = std::make_unique<Tab>();
     if (!fname.empty()) {
-        tab->buffer.LoadFile(fname);
-        tab->buffer.SetFilename(fname);
+        // Absolute, like load_file: keeps ^R working after sidebar navigation.
+        std::string apath = fs::absolute(fs::path(fname)).lexically_normal().string();
+        tab->buffer.LoadFile(apath);
+        tab->buffer.SetFilename(apath);
         if (tab->buffer.GetLineCount() > 0) tab->buffer.SetModified(false);
     } else {
         static const char* exts[] = {".txt", ".cpp", ".py", ".js", ".rs", ".go", ".c"};
@@ -519,16 +546,20 @@ void Editor::new_tab(const std::string& fname) {
 void Editor::close_tab(int idx) {
     if (tabs.size() <= 1) {
         if ((*tabs[current_tab]).buffer.IsModified()) {
-            std::string a = prompt("Unsaved changes. Save? (y/n): ");
-            if (a == "y" || a == "Y") save_file(*tabs[current_tab]);
+            auto a = prompt("Unsaved changes. y=save n=discard Esc=cancel: ");
+            if (!a) return;                              // cancel: keep editing
+            if (*a == "y" || *a == "Y") save_file(*tabs[current_tab]);
+            else if (!(*a == "n" || *a == "N")) return;  // typo'd answer cancels
         }
         running = false;
         return;
     }
     if (idx < 0 || idx >= (int)tabs.size()) return;
     if ((*tabs[idx]).buffer.IsModified()) {
-        std::string a = prompt("Unsaved changes. Save? (y/n): ");
-        if (a == "y" || a == "Y") save_file(*tabs[idx]);
+        auto a = prompt("Unsaved changes. y=save n=discard Esc=cancel: ");
+        if (!a) return;                              // cancel: keep the tab open
+        if (*a == "y" || *a == "Y") save_file(*tabs[idx]);
+        else if (!(*a == "n" || *a == "N")) return;  // typo'd answer cancels
     }
     tabs.erase(tabs.begin() + idx);
     if (current_tab >= (int)tabs.size()) current_tab = (int)tabs.size() - 1;
@@ -590,21 +621,26 @@ void Editor::load_file(Tab& tab, const std::string& fname) {
         set_status(std::format("Error: is a directory: {}", fname));
         return;
     }
-    tab.buffer.LoadFile(fname);
-    tab.buffer.SetFilename(fname);
+    // Store absolute paths: compile_run resolves the file's parent itself and
+    // sidebar navigation changes the process cwd, so relative names would
+    // break ^R after navigating.
+    std::string apath = fs::absolute(fs::path(fname)).lexically_normal().string();
+    tab.buffer.LoadFile(apath);
+    tab.buffer.SetFilename(apath);
     detect_language(tab);
     tab.buffer.SetModified(false);
     tab.y = 0; tab.x = 0;
     clear_search(tab);
-    set_status(std::format("Opened {}", fname));
+    set_status(std::format("Opened {}", apath));
 }
 
 bool Editor::save_file(Tab& tab) {
     auto& buf = tab.buffer;
     if (is_untitled(buf)) {
-        std::string name = prompt("Save As: ");
-        if (name.empty()) return false;
-        buf.SetFilename(name);
+        auto name = prompt("Save As: ");
+        if (!name || name->empty()) return false;
+        // Absolute like load_file so ^R resolves after sidebar navigation.
+        buf.SetFilename(fs::absolute(fs::path(*name)).lexically_normal().string());
     }
     if (buf.GetFilename().empty()) return false;
 
@@ -648,7 +684,7 @@ void Editor::update_sidebar() {
     if (sidebar_scroll > sidebar_sel) sidebar_scroll = sidebar_sel;
 }
 
-std::string Editor::prompt(const std::string& msg) {
+std::optional<std::string> Editor::prompt(const std::string& msg) {
     int my, mx;
     getmaxyx(stdscr, my, mx);
     attron(COLOR_PAIR(CP_STATUS));
@@ -656,13 +692,15 @@ std::string Editor::prompt(const std::string& msg) {
     mvprintw(my - 1, 1, "%s", msg.c_str());
     echo();
     char buf[PROMPT_SIZE] = {0};
-    if (getnstr(buf, PROMPT_SIZE - 1) == ERR) buf[0] = '\0';
+    // ERR means cancelled (Esc), which callers must distinguish from a
+    // deliberate empty answer.
+    if (getnstr(buf, PROMPT_SIZE - 1) == ERR) { noecho(); return std::nullopt; }
     noecho();
     return std::string(buf);
 }
 
 void Editor::fuzzy_finder() {
-    std::string q = prompt("Find File: ");
+    std::string q = prompt("Find File: ").value_or("");
     if (q.empty()) return;
 
     std::vector<std::string> all_files;
@@ -823,17 +861,21 @@ void Editor::replace_current(Tab& tab) {
         set_status("No match to replace");
         return;
     }
-    std::string r = prompt("Replace with: ");
-    if (r.empty()) return;
+    auto r_opt = prompt("Replace with: ");
+    if (!r_opt) return;  // cancelled
+    const std::string r = *r_opt;
     auto hit = search_results[search_idx];
     if (hit.line < 0 || hit.line >= tab.buffer.GetLineCount()) return;
     std::string& line = tab.buffer[hit.line];
     if (hit.col < 0 || hit.col + hit.len > (int)line.length()) return;
 
-    auto del = DeleteCommand::make(tab.buffer, line.substr(hit.col, hit.len), hit.line, hit.col);
-    tab.history.execute(std::move(del));
-    auto ins = InsertCommand::make(tab.buffer, r, hit.line, hit.col);
-    tab.history.execute(std::move(ins));
+    // One composite step: undoing the replace takes a single ^Z, and an empty
+    // replacement is a legitimate delete-the-match operation.
+    auto comp = std::make_unique<CompositeCommand>();
+    comp->add(DeleteCommand::make(tab.buffer, line.substr(hit.col, hit.len), hit.line, hit.col));
+    if (!r.empty())
+        comp->add(InsertCommand::make(tab.buffer, r, hit.line, hit.col));
+    tab.history.execute(std::move(comp));
 
     tab.y = hit.line;
     tab.x = hit.col + (int)r.length();
@@ -893,13 +935,17 @@ void Editor::compile_run(Tab& tab) {
     }
 
     std::vector<std::string> run;
+    std::string out_bin;
     bool has_compile = true;
     if (ext == "cpp" || ext == "cc" || ext == "cxx") {
-        run = {"g++", "-Wall", "-Wextra", cf, "-o", "run"};
+        out_bin = (fs::temp_directory_path() / ("vix-build-" + std::to_string(getpid()))).string();
+        run = {"g++", "-Wall", "-Wextra", cf, "-o", out_bin};
     } else if (ext == "c") {
-        run = {"gcc", "-Wall", "-Wextra", cf, "-o", "run"};
+        out_bin = (fs::temp_directory_path() / ("vix-build-" + std::to_string(getpid()))).string();
+        run = {"gcc", "-Wall", "-Wextra", cf, "-o", out_bin};
     } else if (ext == "rs") {
-        run = {"rustc", cf, "-o", "run"};
+        out_bin = (fs::temp_directory_path() / ("vix-build-" + std::to_string(getpid()))).string();
+        run = {"rustc", cf, "-o", out_bin};
     } else if (ext == "py") {
         run = {"python3", cf}; has_compile = false;
     } else if (ext == "go") {
@@ -930,9 +976,13 @@ void Editor::compile_run(Tab& tab) {
         if (c != 0) {
             printf("\033[1;31m>> build failed (exit %d)\033[0m\n", c);
         } else {
-            std::vector<std::string> run_cmd = {"./run"};
+            // Run via absolute temp path: never clobbers a file named "run"
+            // in the project dir, and works regardless of process cwd.
+            std::vector<std::string> run_cmd = {out_bin};
             rc = run_process(run_cmd, wd);
         }
+        std::error_code rm_ec;
+        fs::remove(out_bin, rm_ec);
     } else {
         printf(">> %s %s\n", run[0].c_str(), run.back().c_str());
         fflush(stdout);
@@ -1667,12 +1717,18 @@ void Editor::run() {
         if (!clip_key) clear_selection(tab);
 
         if (ch == CTRL('q')) {
+            bool proceed = true;
             if (tab.buffer.IsModified()) {
-                std::string a = prompt("Unsaved changes. Save? (y/n): ");
-                if (a == "y" || a == "Y") save_file(tab);
+                auto a = prompt("Unsaved changes. y=save n=discard Esc=cancel: ");
+                if (!a) proceed = false;                     // cancel: keep editing
+                else if (*a == "y" || *a == "Y") save_file(tab);
+                else if (!(*a == "n" || *a == "N")) proceed = false;
             }
-            save_session();
-            running = false;
+            if (proceed) {
+                save_session();
+                running = false;
+            }
+            redraw = true;
         }
         else if (ch == CTRL('s')) { save_file(tab); redraw = true; }
         else if (ch == CTRL('r')) { compile_run(tab); redraw = true; }
@@ -1776,27 +1832,50 @@ void Editor::run() {
             redraw = true;
         }
         else if (ch == CTRL('d')) {
-            std::string q = prompt("Find: ");
-            if (q.empty()) continue;
-            std::string r = prompt("Replace with: ");
-            int count = 0;
-            for (int i = 0; i < tab.buffer.GetLineCount(); i++) {
-                size_t pos = 0;
-                while ((pos = tab.buffer[i].find(q, pos)) != std::string::npos) {
-                    tab.buffer[i] = tab.buffer[i].substr(0, pos) + r + tab.buffer[i].substr(pos + q.length());
-                    pos += r.length();
-                    count++;
+            std::string q = prompt("Find: ").value_or("");
+            if (q.empty()) {
+                redraw = true;
+            } else {
+                auto r = prompt("Replace with: ");
+                int count = 0;
+                if (r) {
+                    // Scan the original lines once, then emit one delete/insert
+                    // pair per hit right-to-left so earlier columns stay valid
+                    // while the composite applies. Everything lands in a single
+                    // undo step instead of mutating the buffer directly.
+                    auto comp = std::make_unique<CompositeCommand>();
+                    for (int i = 0; i < tab.buffer.GetLineCount(); i++) {
+                        const std::string orig = tab.buffer[i];
+                        std::vector<size_t> hits;
+                        size_t pos = 0;
+                        while ((pos = orig.find(q, pos)) != std::string::npos) {
+                            hits.push_back(pos);
+                            pos += q.length();
+                        }
+                        for (size_t h = hits.size(); h-- > 0;) {
+                            comp->add(DeleteCommand::make(
+                                tab.buffer, orig.substr(hits[h], q.length()), i, (int)hits[h]));
+                            if (!r->empty())
+                                comp->add(InsertCommand::make(tab.buffer, *r, i, (int)hits[h]));
+                            count++;
+                        }
+                    }
+                    if (count > 0 && tab.history.execute(std::move(comp)))
+                        status_msg = std::format("Replaced {} occurrence{}", count,
+                                                 count != 1 ? "s" : "");
+                    else if (count > 0)
+                        status_msg = "Replace failed";
+                    else
+                        status_msg = std::format("Not found: {}", q);
+                } else {
+                    status_msg = "Replace cancelled";
                 }
+                msg_time = std::chrono::steady_clock::now();
+                redraw = true;
             }
-            if (count > 0) {
-                tab.buffer.SetModified(true);
-                status_msg = std::format("Replaced {} occurrence{}", count, count != 1 ? "s" : "");
-            } else status_msg = std::format("Not found: {}", q);
-            msg_time = std::chrono::steady_clock::now();
-            redraw = true;
         }
         else if (ch == CTRL('g')) {
-            std::string input = prompt("Go To Line: ");
+            std::string input = prompt("Go To Line: ").value_or("");
             if (!input.empty()) {
                 int line = 0;
                 auto [ptr, ec] = std::from_chars(input.data(), input.data() + input.size(), line);
@@ -1895,7 +1974,7 @@ void Editor::run() {
             if (ch == KEY_UP && sidebar_sel > 0) sidebar_sel--;
             else if (ch == KEY_DOWN && sidebar_sel < (int)sidebar_paths.size() - 1) sidebar_sel++;
             else if (ch == 'a') {
-                std::string n = prompt("New File: ");
+                std::string n = prompt("New File: ").value_or("");
                 if (!n.empty()) {
                     std::ofstream f(n);
                     if (f.is_open()) {
@@ -1908,13 +1987,20 @@ void Editor::run() {
                 }
             } else if (ch == 'd') {
                 if (sidebar_sel > 0) {
-                    std::error_code ec;
-                    std::uintmax_t removed = fs::remove_all(sidebar_paths[sidebar_sel], ec);
-                    if (ec || removed == 0)
-                        set_status(std::format("Error: cannot delete {}", sidebar_paths[sidebar_sel].filename().string()));
-                    else {
-                        set_status(std::format("Deleted {}", sidebar_paths[sidebar_sel].filename().string()));
-                        update_sidebar();
+                    fs::path victim = sidebar_paths[sidebar_sel];
+                    auto ans = prompt(std::format("Delete '{}'? y/N: ",
+                                                  victim.filename().string()));
+                    if (!ans || (*ans != "y" && *ans != "Y")) {
+                        set_status("Delete cancelled");
+                    } else {
+                        std::error_code ec;
+                        std::uintmax_t removed = fs::remove_all(victim, ec);
+                        if (ec || removed == 0)
+                            set_status(std::format("Error: cannot delete {}", victim.filename().string()));
+                        else {
+                            set_status(std::format("Deleted {}", victim.filename().string()));
+                            update_sidebar();
+                        }
                     }
                 }
             } else if (ch == '\n') {
@@ -1944,26 +2030,47 @@ void Editor::run() {
         } else {
             if (ch == KEY_UP && tab.y > 0) tab.y--;
             else if (ch == KEY_DOWN && tab.y < tab.buffer.GetLineCount() - 1) tab.y++;
-            else if (ch == KEY_LEFT && tab.x > 0) tab.x--;
-            else if (ch == KEY_RIGHT && tab.y < tab.buffer.GetLineCount() && tab.x < (int)tab.buffer[tab.y].length()) tab.x++;
+            else if (ch == KEY_LEFT && tab.x > 0 && tab.y < tab.buffer.GetLineCount())
+                // Step a whole codepoint, never into the middle of one.
+                tab.x = prev_codepoint_start(tab.buffer[tab.y], tab.x);
+            else if (ch == KEY_RIGHT && tab.y < tab.buffer.GetLineCount() &&
+                     tab.x < (int)tab.buffer[tab.y].length())
+                tab.x += utf8_seq_len(tab.buffer[tab.y], tab.x);
             else if (ch == KEY_BACKSPACE || ch == 127) {
-                if (tab.x > 0 && tab.x <= (int)tab.buffer[tab.y].length()) {
-                    char deleted = tab.buffer[tab.y][tab.x - 1];
-                    auto cmd = DeleteCommand::make(tab.buffer, std::string(1, deleted), tab.y, tab.x - 1);
-                    tab.history.execute(std::move(cmd));
-                    tab.x--;
-                    char next = (tab.x < (int)tab.buffer[tab.y].length()) ? tab.buffer[tab.y][tab.x] : '\0';
-                    if ((deleted == '(' && next == ')') || (deleted == '{' && next == '}') ||
-                        (deleted == '[' && next == ']') || (deleted == '"' && next == '"')) {
-                        auto cmd2 = DeleteCommand::make(tab.buffer, std::string(1, next), tab.y, tab.x);
-                        tab.history.execute(std::move(cmd2));
+                if (tab.x > 0 && tab.y < tab.buffer.GetLineCount() &&
+                    tab.x <= (int)tab.buffer[tab.y].length()) {
+                    const std::string& cur = tab.buffer[tab.y];
+                    int start = prev_codepoint_start(cur, tab.x);
+                    std::string deleted_text = cur.substr(start, tab.x - start);
+                    char next = (tab.x < (int)cur.length()) ? cur[tab.x] : '\0';
+                    bool closes_pair =
+                        deleted_text.size() == 1 &&
+                        ((deleted_text[0] == '(' && next == ')') ||
+                         (deleted_text[0] == '{' && next == '}') ||
+                         (deleted_text[0] == '[' && next == ']') ||
+                         (deleted_text[0] == '"' && next == '"'));
+                    if (closes_pair) {
+                        // The auto-inserted pair dies as one undo step.
+                        auto cmd = std::make_unique<CompositeCommand>();
+                        cmd->add(DeleteCommand::make(tab.buffer, deleted_text, tab.y, start));
+                        cmd->add(DeleteCommand::make(tab.buffer, std::string(1, next), tab.y, start));
+                        tab.history.execute(std::move(cmd));
+                    } else {
+                        auto cmd = DeleteCommand::make(tab.buffer, deleted_text, tab.y, start);
+                        tab.history.execute(std::move(cmd));
                     }
+                    tab.x = start;
                 } else if (tab.y > 0) {
-                    tab.x = (int)tab.buffer[tab.y - 1].length();
-                    tab.buffer[tab.y - 1] += tab.buffer[tab.y];
-                    tab.buffer.EraseLine(tab.y);
-                    tab.y--;
-                    tab.buffer.SetModified(true);
+                    // Line join goes through history so it is undoable like
+                    // every other edit; x must be captured before the join.
+                    int upper_len = 0;
+                    if (tab.y - 1 < tab.buffer.GetLineCount())
+                        upper_len = (int)tab.buffer[tab.y - 1].length();
+                    auto cmd = JoinLinesCommand::make(tab.buffer, tab.y);
+                    if (tab.history.execute(std::move(cmd))) {
+                        tab.x = upper_len;
+                        tab.y--;
+                    }
                 }
                 redraw = true;
             } else if (ch == '\n') {

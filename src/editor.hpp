@@ -106,7 +106,9 @@ private:
                    int start_col = 0, int end_col = -1, int scroll_disp = 0);
     void draw_status(int my, int mx);
     void place_cursor(int my, int mx, Tab& tab);
-    std::string prompt(const std::string& msg);
+    // Returns nullopt when the user cancelled (Esc/ERR); an empty string is a
+    // real, deliberate empty answer. Callers that don't care can value_or("").
+    std::optional<std::string> prompt(const std::string& msg);
     void compile_run(Tab& tab);
     void update_sidebar();
     void find_match(Tab& tab);

@@ -90,11 +90,11 @@ def exit_code(status):
 
 
 def clean_quit(fd, pid):
-    """Send Ctrl+Q and answer 'n' to any unsaved-changes prompt."""
+    """Send Ctrl+Q and answer 'n' (discard) to any unsaved-changes prompt."""
     os.write(fd, CTRL_Q)
     time.sleep(0.6)
     out = drain(fd, 0.3)
-    if b"Save?" in out:
+    if b"Unsaved changes" in out:
         os.write(fd, b"n\n")
     status = wait_exit(pid)
     return status
@@ -172,7 +172,7 @@ def scenario_unsaved_prompt(tmp):
         os.write(fd, CTRL_Q)
         time.sleep(0.6)
         out = drain(fd, 0.3)
-        if b"Save?" not in out:
+        if b"Unsaved changes" not in out:
             return "unsaved prompt missing"
         os.write(fd, b"n\n")
         status = wait_exit(pid)
