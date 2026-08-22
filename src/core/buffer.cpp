@@ -91,6 +91,9 @@ void Buffer::Insert(int line, int col, const std::string& text) {
 
 void Buffer::Delete(int line, int col, int count) {
     if (line < 0 || line >= (int)lines.size()) return;
+    // A negative count would convert to a huge size_t below and wipe the
+    // rest of the line; treat it as caller error instead.
+    if (count < 0) return;
     if (col < 0 || col >= (int)lines[line].length()) return;
     if (col + count > (int)lines[line].length()) count = (int)lines[line].length() - col;
     lines[line].erase(col, count);
